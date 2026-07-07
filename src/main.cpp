@@ -74,6 +74,30 @@ void msgCallbackRightArmJointState(const sensor_msgs::JointState::ConstPtr& msg)
         right_arm_torque[3] = msg->effort[6];
     }
 
+// F/T 센서 콜백 (임피던스 제어의 F_ext로 사용)
+void msgCallbackLeftFTSensor(const geometry_msgs::WrenchStamped::ConstPtr& msg)
+{
+    left_ft_force(0) = msg->wrench.force.x;
+    left_ft_force(1) = msg->wrench.force.y;
+    left_ft_force(2) = msg->wrench.force.z;
+}
+
+void msgCallbackRightFTSensor(const geometry_msgs::WrenchStamped::ConstPtr& msg)
+{
+    right_ft_force(0) = msg->wrench.force.x;
+    right_ft_force(1) = msg->wrench.force.y;
+    right_ft_force(2) = msg->wrench.force.z;
+}
+
+// 수동 오버라이드용 (idle 상태이거나 mode 0/1/2 테스트 시에만 유효.
+// vision pick(mode 3) 재생 중에는 main.cpp가 세그먼트 기반으로 매 스텝 덮어씀)
+void msgCallbackTaskPhase(const std_msgs::Int32::ConstPtr& msg)
+{
+    if (msg->data >= PHASE_APPROACH && msg->data <= PHASE_RETURN) {
+        task_phase = msg->data;
+    }
+}
+
 void msgCallbackDualArmCmd(const std_msgs::Float32MultiArray::ConstPtr& msg)
 {
     command_mode = (int)msg->data[0];   // data[0] = 0/1/2/3
@@ -144,6 +168,14 @@ int main(int argc, char **argv)
     ros::Subscriber sub_right_arm_joint_angle = nh.subscribe("/dual_arm/joint_states", 100, msgCallbackRightArmJointState);
     ros::Subscriber sub_dual_arm_cmd = nh.subscribe("/dual_arm/DualArmCmd_sim", 100, msgCallbackDualArmCmd);
     ros::Subscriber sub_aruco_pose = nh.subscribe("/aruco_ros/pose", 10, msgCallbackArucoPose);
+    ros::Subscriber sub_left_ft_sensor = nh.subscribe("/dual_arm/left_ft_sensor", 100, msgCallbackLeftFTSensor);
+    ros::Subscriber sub_right_ft_sensor = nh.subscribe("/dual_arm/right_ft_sensor", 100, msgCallbackRightFTSensor);
+    ros::Subscriber sub_task_phase = nh.subscribe("/dual_arm/TaskPhase", 10, msgCallbackTaskPhase);
+
+    // TaskPhase 자동전환 알림 + 궤적 실행 완료 알림 (vision pick 진행상황을 외부에서 관측 가능)
+    ros::Publisher task_phase_pub = nh.advertise<std_msgs::Int32>("/dual_arm/TaskPhase", 10);
+    ros::Publisher dual_armtraj_done_pub = nh.advertise<std_msgs::Bool>("/dual_arm/TrajectoryDone", 10);
+    int prev_task_phase = task_phase;   // 값이 바뀔 때만 발행 (edge-trigger)
 
     // ArUco pose(카메라 프레임) -> world 프레임 변환용
     tf::TransformListener tfListener;
@@ -242,6 +274,8 @@ int main(int argc, char **argv)
             if (command_mode == 0) {
                 dualarm.JointTrajectoryQuintic(dual_arm_initp, dual_arm_commandp,
                     dual_arm_jointp_trajectory, dual_arm_jointv_trajectory, dual_arm_jointa_trajectory);
+                // 수동 modeling 명령은 임피던스 대상이 아님 -> 전 구간 접근 단계로 태깅
+                dual_arm_phase_trajectory.setConstant(dual_arm_jointp_trajectory.rows(), PHASE_APPROACH);
             }
 
             // ===== 모드 1: joint sim (위치 IK 1회 → 관절공간 5차 궤적) =====
@@ -255,6 +289,8 @@ int main(int argc, char **argv)
 
                 dualarm.JointTrajectoryQuintic(dual_arm_initp, dual_arm_commandp,
                     dual_arm_jointp_trajectory, dual_arm_jointv_trajectory, dual_arm_jointa_trajectory);
+                // 수동 joint sim 명령은 임피던스 대상이 아님 -> 전 구간 접근 단계로 태깅
+                dual_arm_phase_trajectory.setConstant(dual_arm_jointp_trajectory.rows(), PHASE_APPROACH);
             }
 
             // ===== 모드 2: cartesian sim (직교 직선 → 매 스텝 IK → 관절각 궤적) =====
@@ -318,6 +354,9 @@ int main(int argc, char **argv)
                             (dual_arm_jointv_trajectory(k+1,i) - dual_arm_jointv_trajectory(k-1,i)) / (2.0*SAMPLING_TIME_TRAJ);
                     }
                 }
+
+                // 수동 cartesian sim 명령은 임피던스 대상이 아님 -> 전 구간 접근 단계로 태깅
+                dual_arm_phase_trajectory.setConstant(steps, PHASE_APPROACH);
             }
 
             // ===== 모드 3: vision pick (ArUco 검출 -> world 변환 -> 접근/파지/이송) =====
@@ -359,6 +398,7 @@ int main(int argc, char **argv)
                         Vector3d start_R = data.oMf[r_EE].translation();
 
                         std::vector<MatrixXd> pos_segs, vel_segs, acc_segs;
+                        std::vector<int> seg_phase;   // 세그먼트별 TaskPhase 태그 (재생 중 자동 전환용)
                         VectorXd seed_vec = q_ik_seed;
                         double prev_q[DoF];
                         for (int i = 0; i < DoF; i++) prev_q[i] = dual_arm_initp[i];
@@ -377,23 +417,34 @@ int main(int argc, char **argv)
                             seed_vec = q_result;
                         };
 
-                        // 1) 양팔 동시 접근: 물체 양옆(y ±straddle_offset)으로
+                        // 1) 양팔 동시 접근: 물체 양옆(y ±straddle_offset)으로 -> 접근 단계(임피던스 OFF)
                         addSegment(obj + Vector3d(0,  straddle_offset, 0),
                                    obj + Vector3d(0, -straddle_offset, 0));
-                        // 2) 양팔 동시 파지: 간격을 좁혀 물체에 밀착
+                        seg_phase.push_back(PHASE_APPROACH);
+
+                        // 2) 양팔 동시 파지: 간격을 좁혀 물체에 밀착 -> 파지 시작, 임피던스 ON
                         addSegment(obj + Vector3d(0,  grasp_offset, 0),
                                    obj + Vector3d(0, -grasp_offset, 0));
-                        // 3) 양팔 동시 들어올리기 (간격 유지한 채 위로)
+                        seg_phase.push_back(PHASE_GRASP_TO_PLACE);
+
+                        // 3) 양팔 동시 들어올리기 (간격 유지한 채 위로) -> 임피던스 ON 유지
                         addSegment(obj + Vector3d(0,  grasp_offset, lift_offset),
                                    obj + Vector3d(0, -grasp_offset, lift_offset));
-                        // 4) 양팔 동시 이송: 목표 좌표 위 lift_offset 높이로 이동
+                        seg_phase.push_back(PHASE_GRASP_TO_PLACE);
+
+                        // 4) 양팔 동시 이송: 목표 좌표 위 lift_offset 높이로 이동 -> 임피던스 ON 유지
                         addSegment(transport_pt + Vector3d(0,  grasp_offset, lift_offset),
                                    transport_pt + Vector3d(0, -grasp_offset, lift_offset));
-                        // 5) 양팔 동시 내려놓기
+                        seg_phase.push_back(PHASE_GRASP_TO_PLACE);
+
+                        // 5) 양팔 동시 내려놓기 -> 내려놓기 완료 시점까지 임피던스 ON
                         addSegment(transport_pt + Vector3d(0,  grasp_offset, 0),
                                    transport_pt + Vector3d(0, -grasp_offset, 0));
-                        // 6) 양팔 동시 원래 위치로 복귀
+                        seg_phase.push_back(PHASE_GRASP_TO_PLACE);
+
+                        // 6) 양팔 동시 원래 위치로 복귀 -> 복귀 단계, 임피던스 OFF
                         addSegment(start_L, start_R);
+                        seg_phase.push_back(PHASE_RETURN);
 
                         ROS_INFO("Vision pick(dual-arm): object(world)=[%.3f %.3f %.3f], transport=[%.3f %.3f %.3f]",
                                  obj.x(), obj.y(), obj.z(),
@@ -404,19 +455,24 @@ int main(int argc, char **argv)
                         dual_arm_jointp_trajectory.resize(total_rows, DoF);
                         dual_arm_jointv_trajectory.resize(total_rows, DoF);
                         dual_arm_jointa_trajectory.resize(total_rows, DoF);
+                        dual_arm_phase_trajectory.resize(total_rows);
                         int offset = 0;
                         for (size_t k = 0; k < pos_segs.size(); ++k) {
                             int r = pos_segs[k].rows();
                             dual_arm_jointp_trajectory.block(offset, 0, r, DoF) = pos_segs[k];
                             dual_arm_jointv_trajectory.block(offset, 0, r, DoF) = vel_segs[k];
                             dual_arm_jointa_trajectory.block(offset, 0, r, DoF) = acc_segs[k];
+                            dual_arm_phase_trajectory.segment(offset, r).setConstant(seg_phase[k]);
                             offset += r;
                         }
                     }
                 }
             }
 
-            if (new_trajectory_built) traj_cnt = 0;
+            if (new_trajectory_built) {
+                traj_cnt = 0;
+                traj_done_published = false;   // 새 궤적 시작 -> 완료 알림 다시 대기
+            }
             callback = false;
         }
         else if (traj_cnt < dual_arm_jointp_trajectory.rows()){
@@ -431,6 +487,13 @@ int main(int argc, char **argv)
             for (int i = 0; i < DoF; i++){
                 dual_arm_targeta_vec(i) = dual_arm_jointa_trajectory(traj_cnt, i) + PD_acc[i];
             }
+
+            // vision pick(mode 3) 재생 중이면 현재 행에 태깅된 phase로 자동 전환.
+            // (mode 0/1/2는 전 구간 PHASE_APPROACH로 태깅되어 있어 임피던스가 자동으로 켜지지 않음)
+            if (traj_cnt < dual_arm_phase_trajectory.size()) {
+                task_phase = dual_arm_phase_trajectory(traj_cnt);
+            }
+
             traj_cnt++;
         }
         else {
@@ -440,18 +503,92 @@ int main(int argc, char **argv)
                 dual_arm_targetv[i] = 0.0;  // 정지 목표
                 dual_arm_targeta_vec(i) = 0.0;
             }
-        
+
             // PD 제어로 자세 유지
             dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
-        
+
             for (int i = 0; i < DoF; i++) {
                 dual_arm_targeta_vec(i) = PD_acc[i];
             }
-        
+
+            // 궤적(복귀 포함) 실행이 막 끝난 시점: 접근 단계로 리셋 + 완료 알림, 딱 한 번만
+            if (!traj_done_published) {
+                task_phase = PHASE_APPROACH;   // 복귀 완료 -> 접근 단계로 리셋 (임피던스 OFF)
+
+                std_msgs::Bool traj_done_msg;
+                traj_done_msg.data = true;
+                dual_armtraj_done_pub.publish(traj_done_msg);
+                traj_done_published = true;
+            }
+        }
+
+        // TaskPhase 값이 바뀐 순간에만 발행 (외부에서 전환 시점을 관측 가능)
+        if (task_phase != prev_task_phase) {
+            std_msgs::Int32 phase_msg;
+            phase_msg.data = task_phase;
+            task_phase_pub.publish(phase_msg);
+            prev_task_phase = task_phase;
         }
 
         for (int i = 0; i < DoF; ++i) {
             dual_arm_targetp_vec(i) = dual_arm_targetp[i];
+        }
+
+        // ===== 임피던스 제어 (파지~내려놓기 구간에서만 활성화, 그 외에는 기존 PD+RNEA만) =====
+        // Md*e_ddot + Bd*e_dot + Kd*e = F_ext  (e = 실제 EE 위치 - 목표 EE 위치, world frame, 위치 3축만)
+        // 여기서 얻은 e_ddot(가상 응답 가속도)를 댐핑 의사역행렬로 관절가속도로 변환해
+        // dual_arm_targeta_vec 에 더해준다. -> RNEA가 M(q)*a 항을 통해 자동으로 추가 토크로 반영.
+        bool impedance_active = (task_phase == PHASE_GRASP_TO_PLACE);
+        if (impedance_active) {
+            // 실제 관절 상태에서의 FK/자코비안
+            pinocchio::computeJointJacobians(model, data, dual_arm_jointp_vec);
+            pinocchio::updateFramePlacements(model, data);
+
+            Vector3d xL_actual = data.oMf[l_EE].translation();
+            Vector3d xR_actual = data.oMf[r_EE].translation();
+            Matrix3d RL_actual = data.oMf[l_EE].rotation();
+            Matrix3d RR_actual = data.oMf[r_EE].rotation();
+
+            pinocchio::Data::Matrix6x JL_full(6, model.nv); JL_full.setZero();
+            pinocchio::Data::Matrix6x JR_full(6, model.nv); JR_full.setZero();
+            pinocchio::getFrameJacobian(model, data, l_EE, pinocchio::LOCAL_WORLD_ALIGNED, JL_full);
+            pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR_full);
+            MatrixXd JL = JL_full.topRows<3>();   // 위치 3행만 (DoF 열)
+            MatrixXd JR = JR_full.topRows<3>();
+
+            Vector3d xL_dot_actual = JL * dual_arm_jointv_vec;
+            Vector3d xR_dot_actual = JR * dual_arm_jointv_vec;
+
+            // 목표(지령) EE 위치/속도 (target 궤적 기준 FK, 같은 자코비안으로 근사)
+            pinocchio::forwardKinematics(model, data, dual_arm_targetp_vec);
+            pinocchio::updateFramePlacements(model, data);
+            Vector3d xL_d = data.oMf[l_EE].translation();
+            Vector3d xR_d = data.oMf[r_EE].translation();
+
+            VectorXd targetv_vec(DoF);
+            for (int i = 0; i < DoF; i++) targetv_vec(i) = dual_arm_targetv[i];
+            Vector3d xL_d_dot = JL * targetv_vec;
+            Vector3d xR_d_dot = JR * targetv_vec;
+
+            Vector3d eL = xL_actual - xL_d;
+            Vector3d eR = xR_actual - xR_d;
+            Vector3d eL_dot = xL_dot_actual - xL_d_dot;
+            Vector3d eR_dot = xR_dot_actual - xR_d_dot;
+
+            // F/T 센서 힘: 센서가 EE 프레임과 동일 방향으로 장착되었다고 가정하고 world frame으로 변환
+            Vector3d F_ext_L = RL_actual * left_ft_force;
+            Vector3d F_ext_R = RR_actual * right_ft_force;
+
+            Vector3d eL_ddot, eR_ddot;
+            for (int k = 0; k < 3; k++) {
+                eL_ddot(k) = (F_ext_L(k) - Bd_left[k]*eL_dot(k) - Kd_imp_left[k]*eL(k)) / Md_left[k];
+                eR_ddot(k) = (F_ext_R(k) - Bd_right[k]*eR_dot(k) - Kd_imp_right[k]*eR(k)) / Md_right[k];
+            }
+
+            VectorXd dq_ddot_L = dualarm.DampedPinv(JL, IMPEDANCE_DLS_LAMBDA) * eL_ddot;
+            VectorXd dq_ddot_R = dualarm.DampedPinv(JR, IMPEDANCE_DLS_LAMBDA) * eR_ddot;
+
+            dual_arm_targeta_vec += dq_ddot_L + dq_ddot_R;
         }
 
         // dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_jointv, PD_torque);

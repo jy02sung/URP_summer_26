@@ -75,17 +75,33 @@ void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, Matrix
 {
 	double q_dot_des = 0.5;  // 원하는 각속도 (rad/s)
 
-	// 모든 관절 중 최대 오차를 기준으로 전체 궤적 시간(Tf) 계산
-	double max_q_error = 0;
-	for (int i = 0; i < DoF; i++) {
-	double error = fabs(q_cmd[i] - q_ini[i]);
-	if (max_q_error < error)
-	max_q_error = error;
+	// 관절 인덱스 레이아웃: 0=waist,1=head_yaw,2=head_pitch,3~6=왼팔,7~10=오른팔
+	// 왼팔/오른팔 Tf를 각자의 최대 오차로 독립 계산 -> 변위가 작은 팔이 큰 팔의 Tf에 끌려가서
+	// 초반 속도가 지나치게 작아지는(=늦게 움직이는 것처럼 보이는) 문제를 제거한다.
+	// waist/head는 팔이 아니므로 둘 중 더 긴 Tf(Tf_max)에 맞춘다.
+	double max_error_left = 0, max_error_right = 0;
+	for (int i = 3; i <= 6; i++) {
+		double error = fabs(q_cmd[i] - q_ini[i]);
+		if (max_error_left < error) max_error_left = error;
 	}
-	double Tf = max_q_error / q_dot_des;  // 궤적 전체 시간
+	for (int i = 7; i <= 10; i++) {
+		double error = fabs(q_cmd[i] - q_ini[i]);
+		if (max_error_right < error) max_error_right = error;
+	}
 
-	// 샘플링 시간에 따른 총 step 수 계산
-	int step = round(Tf / SAMPLING_TIME_TRAJ);
+	double Tf_left  = max_error_left  / q_dot_des;
+	double Tf_right = max_error_right / q_dot_des;
+	double Tf_max   = std::max(Tf_left, Tf_right);   // waist/head는 더 긴 쪽 Tf에 맞춤
+
+	// 관절별 Tf 배열 (재생은 전부 t=0에서 동시에 시작, 각자 자신의 Tf에 도달하면 그 자리에서 정지 유지)
+	double Tf[DoF];
+	Tf[0] = Tf_max; Tf[1] = Tf_max; Tf[2] = Tf_max;
+	for (int i = 3; i <= 6;  i++) Tf[i] = Tf_left;
+	for (int i = 7; i <= 10; i++) Tf[i] = Tf_right;
+
+	// 전체 재생 구간(step)은 가장 긴 Tf(=Tf_max) 기준. 이보다 Tf가 짧은 관절은 도달 후 목표값 유지.
+	int step = round(Tf_max / SAMPLING_TIME_TRAJ);
+	if (step < 1) step = 1;
 	q_out.resize(step, DoF);
 	q_dot_out.resize(step, DoF);
 	q_acc_out.resize(step, DoF);
@@ -96,26 +112,38 @@ void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, Matrix
 	// c3 = 10*(qf - q0) / Tf^3, c4 = -15*(qf - q0) / Tf^4, c5 = 6*(qf - q0) / Tf^5.
 	for (int i = 0; i < DoF; i++)
 	{
-	double q0 = q_ini[i];
-	double qf = q_cmd[i];
+		double q0 = q_ini[i];
+		double qf = q_cmd[i];
+		double Tf_i = Tf[i];
 
-	double c0 = q0;
-	double c1 = 0.0;
-	double c2 = 0.0;
-	double c3 = 10.0 * (qf - q0) / pow(Tf, 3);
-	double c4 = -15.0 * (qf - q0) / pow(Tf, 4);
-	double c5 = 6.0 * (qf - q0) / pow(Tf, 5);
+		bool no_motion = (Tf_i < 1e-9);  // 해당 관절(그룹)의 목표 변위가 사실상 0인 경우
 
-	for (int j = 0; j < step; j++)
-	{
-	double t = j * SAMPLING_TIME_TRAJ;
-	// 위치: q(t) = c0 + c1*t + c2*t^2 + c3*t^3 + c4*t^4 + c5*t^5
-	q_out(j, i) = c0 + c1*t + c2*t*t + c3*pow(t, 3) + c4*pow(t, 4) + c5*pow(t, 5);
-	// 속도: q_dot(t) = c1 + 2*c2*t + 3*c3*t^2 + 4*c4*t^3 + 5*c5*t^4
-	q_dot_out(j, i) = c1 + 2.0*c2*t + 3.0*c3*t*t + 4.0*c4*pow(t, 3) + 5.0*c5*pow(t, 4);
-	// 가속도: q_double_dot(t) = 2*c2 + 6*c3*t + 12*c4*t^2 + 20*c5*t^3
-	q_acc_out(j, i) = 2.0*c2 + 6.0*c3*t + 12.0*c4*t*t + 20.0*c5*pow(t, 3);
-	}
+		double c0 = q0;
+		double c1 = 0.0;
+		double c2 = 0.0;
+		double c3 = no_motion ? 0.0 : 10.0 * (qf - q0) / pow(Tf_i, 3);
+		double c4 = no_motion ? 0.0 : -15.0 * (qf - q0) / pow(Tf_i, 4);
+		double c5 = no_motion ? 0.0 : 6.0 * (qf - q0) / pow(Tf_i, 5);
+
+		for (int j = 0; j < step; j++)
+		{
+			double t = j * SAMPLING_TIME_TRAJ;
+
+			if (t >= Tf_i) {
+				// 자신의 Tf에 먼저 도달한 관절(waist/head보다 짧은 팔)은 목표 자세에서 정지 유지
+				q_out(j, i) = qf;
+				q_dot_out(j, i) = 0.0;
+				q_acc_out(j, i) = 0.0;
+				continue;
+			}
+
+			// 위치: q(t) = c0 + c1*t + c2*t^2 + c3*t^3 + c4*t^4 + c5*t^5
+			q_out(j, i) = c0 + c1*t + c2*t*t + c3*pow(t, 3) + c4*pow(t, 4) + c5*pow(t, 5);
+			// 속도: q_dot(t) = c1 + 2*c2*t + 3*c3*t^2 + 4*c4*t^3 + 5*c5*t^4
+			q_dot_out(j, i) = c1 + 2.0*c2*t + 3.0*c3*t*t + 4.0*c4*pow(t, 3) + 5.0*c5*pow(t, 4);
+			// 가속도: q_double_dot(t) = 2*c2 + 6*c3*t + 12*c4*t^2 + 20*c5*t^3
+			q_acc_out(j, i) = 2.0*c2 + 6.0*c3*t + 12.0*c4*t*t + 20.0*c5*pow(t, 3);
+		}
 	}
 }
 

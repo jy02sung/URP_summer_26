@@ -20,7 +20,10 @@
 #include <std_msgs/Float64.h>
 #include <std_msgs/Float32MultiArray.h>
 #include <std_msgs/Float64MultiArray.h>
+#include <std_msgs/Int32.h>
+#include <std_msgs/Bool.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/WrenchStamped.h>
 
 using namespace std;
 using namespace Eigen;
@@ -48,6 +51,8 @@ VectorXd q_ik_result = VectorXd::Zero(DoF); // IK 결과
 
 bool callback = false;
 int traj_cnt = 1;
+bool traj_done_published = false;   // 현재 궤적의 TrajectoryDone 발행 여부 (콜백마다 리셋)
+VectorXi dual_arm_phase_trajectory = VectorXi::Zero(1);  // 각 궤적 행(row)이 속한 TaskPhase (vision pick 세그먼트 태깅용)
 
 // 각 관절 상태 저장 (필요 시 콜백 함수에서 사용)
 double waist_jointp[1] = {0};
@@ -103,6 +108,31 @@ VectorXd nonlinear_torque = VectorXd::Zero(DoF);
 VectorXd dynamic_torque = VectorXd::Zero(DoF);
 
 double target_torque[DoF] = {0, };
+
+////////////////////////////////////////////////////////////////////////////////////////////
+//------------------------------------- Impedance Control ---------------------------------//
+////////////////////////////////////////////////////////////////////////////////////////////
+// 작업 단계: 접근 / 파지~내려놓기 / 복귀. 파지~내려놓기 구간에서만 임피던스 활성화.
+// vision pick(command_mode==3) 실행 시 main.cpp가 세그먼트별로 dual_arm_phase_trajectory에
+// 태깅해서 재생 중 자동으로 전환한다. 그 외 모드(0/1/2) 또는 idle 상태에서는
+// /dual_arm/TaskPhase(std_msgs/Int32) 구독으로 수동 오버라이드 가능 (기본값: 접근, 임피던스 OFF).
+enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2 };
+int task_phase = PHASE_APPROACH;
+
+// F/T 센서 측정값 (force.x,y,z), /dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor 콜백에서 갱신
+Vector3d left_ft_force  = Vector3d::Zero();
+Vector3d right_ft_force = Vector3d::Zero();
+
+// 가상 스프링-댐퍼-질량 파라미터 (튜닝용): Md*e_ddot + Bd*e_dot + Kd*e = F_ext,  e = x_actual - x_desired
+double Md_left[3]      = { 2.0, 2.0, 2.0 };      // 가상 질량 [kg]
+double Bd_left[3]      = { 50.0, 50.0, 50.0 };   // 가상 댐핑 [N·s/m]
+double Kd_imp_left[3]  = { 300.0, 300.0, 300.0 };// 가상 강성 [N/m]
+
+double Md_right[3]     = { 2.0, 2.0, 2.0 };
+double Bd_right[3]     = { 50.0, 50.0, 50.0 };
+double Kd_imp_right[3] = { 300.0, 300.0, 300.0 };
+
+const double IMPEDANCE_DLS_LAMBDA = 0.05;  // Cartesian 가속도 -> 관절 가속도 변환용 댐핑 의사역행렬 계수
 
 
 
