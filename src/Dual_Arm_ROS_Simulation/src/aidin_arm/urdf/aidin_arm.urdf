@@ -1,0 +1,370 @@
+<?xml version="1.0"?>
+<!-- Revolute-Revolute Manipulator -->
+<robot name="aidin_arm">
+
+  <!-- Used for fixing robot to Gazebo 'base_link' -->
+  <link name="world"/>
+
+ <!-- Mobile_Robot -->
+  <joint name="x_joint_move" type="prismatic">
+    <parent link="world"/>
+    <child link="dummy_base_1"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+    <dynamics damping="1"/>
+    <!-- lower, upper unit: radian -->
+    <limit lower="-1000" upper="1000" effort="200000" velocity="10000"/> 
+  </joint>
+
+  <link name="dummy_base_1">
+		<inertial>
+			<origin xyz="0.0 0.0 0" rpy="0.0 0.0 0.0"/>
+			<mass value="0.01"/>
+			<inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.01"/>
+		</inertial>
+	</link>
+
+  <joint name="y_joint_move" type="prismatic">
+    <parent link="dummy_base_1"/>
+    <child link="dummy_base_2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <dynamics damping="1"/>
+    <limit lower="-1000" upper="1000" effort="200000" velocity="10000"/>  
+  </joint>
+
+  <link name="dummy_base_2">
+		<inertial>
+			<origin xyz="0.0 0.0 0" rpy="0.0 0.0 0.0"/>
+			<mass value="0.01"/>
+			<inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.01"/>
+		</inertial>
+	</link>
+
+  <joint name="z_joint_revolute" type="continuous">
+    <parent link="dummy_base_2"/>
+    <child link="mobile_base"/>
+    <origin xyz="0 0 0.45" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="1"/>
+    <limit effort="200" velocity="10"/>
+  </joint>
+
+  <link name="mobile_base">
+    <collision>
+      <origin xyz="0 0 0.15" rpy="0 0 0"/>
+      <geometry>
+	      <box size="0.8 0.3 0.3"/>
+      </geometry>
+    </collision>
+
+    <visual>
+      <origin xyz="0 0 0.15" rpy="0 0 0"/>
+      <geometry>
+	      <box size="0.8 0.3 0.3"/>
+      </geometry>
+      <material name="white"/>
+    </visual>
+
+    <inertial>
+      <origin xyz="0 0 0.15" rpy="0 0 0"/>
+      <mass value="10"/>
+      <inertia
+      ixx="0.15" ixy="0.0" ixz="0.0"
+      iyy="0.60833333333" iyz="0.0"
+      izz="0.60833333333"/>
+      </inertial>
+  </link>
+
+<!-- Aidin_Arm -->
+  <joint name="arm_joint0" type="fixed">
+    <parent link="mobile_base"/>
+    <child link="arm_base"/>
+    <origin xyz="0.2 0 0.3" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+
+  <!-- Base Link -->
+  <link name="arm_base">
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_r1_prt.STL" scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_r1_prt.STL" scale="1 1 1"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+
+    <inertial>
+      <origin xyz="0 0 0.02237" rpy="0 0 0"/>
+      <mass value="1"/>
+      <inertia
+      ixx="0.000705" ixy="0.0" ixz="0.0"
+      iyy="0.000705" iyz="0.0"
+      izz="0.001025"/>
+      </inertial>
+  </link>
+
+  <!-- <joint name="arm_joint1" type="fixed">
+    <parent link="arm_base"/>
+    <child link="arm_link1"/>
+    <origin xyz="0 0 ${d1}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint> -->
+  <joint name="arm_joint1" type="revolute">
+    <parent link="arm_base"/>
+    <child link="arm_link1"/>
+    <origin xyz="0 0 ${d1}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="1"/>
+    <limit lower="-10" upper="10" effort="200" velocity="10"/>
+  </joint>
+
+  <!-- Link 1 -->
+  <link name="arm_link1">
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_p2_prt.STL" scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_p2_prt.STL" scale="1 1 1"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+
+    <inertial>
+      <origin xyz="0 0 -0.01083" rpy="0 0 0"/>
+      <mass value="2"/>
+      <inertia
+      ixx="0.005248" ixy="0.0" ixz="0.0"
+      iyy="0.003269" iyz="0.0"
+      izz="0.004383"/>
+      </inertial>
+    </link>
+
+  <joint name="arm_joint2" type="revolute">
+    <parent link="arm_link1"/>
+    <child link="arm_link2"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="1"/>
+    <!-- <limit lower="-1.74533" upper="1.74533" effort="200" velocity="10"/> -->
+    <limit lower="-3.316126" upper="0.1745337" effort="200" velocity="10"/>
+  </joint>
+  <!-- <joint name="arm_joint2" type="fixed">
+    <parent link="arm_link1"/>
+    <child link="arm_link2"/>
+    <origin xyz="0 0 0" rpy="-1.5708 -1.5708 0"/>
+    <axis xyz="0 0 1"/>
+  </joint> -->
+
+
+  <!-- Link 2 -->
+  <link name="arm_link2">
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_p3_prt.STL" scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_p3_prt.STL" scale="1 1 1"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+
+    <inertial>
+      <origin xyz="0.175 0 0" rpy="0 0 0"/>
+      <mass value="2"/>
+      <inertia
+      ixx="0.001909" ixy="0.0" ixz="0.0"
+      iyy="0.028177" iyz="0.0"
+      izz="0.028631"/>
+      </inertial>
+  </link>
+
+  <!-- <joint name="arm_joint3" type="fixed">
+    <parent link="arm_link2"/>
+    <child link="arm_link3"/>
+    <origin xyz="${a2} 0 0" rpy="0 0 -1.5708"/>
+    <axis xyz="0 0 1"/>
+  </joint> -->
+  <joint name="arm_joint3" type="revolute">
+    <parent link="arm_link2"/>
+    <child link="arm_link3"/>
+    <origin xyz="${a2} 0 0" rpy="0 0 -1.5708"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="1"/>
+    <limit lower="0" upper="3.1416" effort="200" velocity="10"/>
+  </joint>
+
+  <!-- Link 3 -->
+  <link name="arm_link3">
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_r4_prt.STL" scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_r4_prt.STL" scale="1 1 1"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+
+    <inertial>
+      <origin xyz="0.069785 0.06064 0" rpy="0 0 0"/>
+      <mass value="1.5"/>
+      <inertia
+      ixx="0.004752" ixy="0.002269" ixz="0.0"
+      iyy="0.003243" iyz="0.0"
+      izz="0.006701"/>
+    </inertial>
+  </link>
+  
+  <!-- <joint name="arm_joint4" type="fixed">
+    <parent link="arm_link3"/>
+    <child link="arm_link4"/>
+    <origin xyz="0 ${d3} ${L3}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint> -->
+  <joint name="arm_joint4" type="revolute">
+    <parent link="arm_link3"/>
+    <child link="arm_link4"/>
+    <origin xyz="${a3} ${d4} 0" rpy="-1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.5"/>
+    <limit lower="-10" upper="10" effort="200" velocity="10"/>
+  </joint>
+
+<!-- Link 4 -->
+  <link name="arm_link4">
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_p5_prt.STL" scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_p5_prt.STL" scale="1 1 1"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+
+    <inertial>
+      <origin xyz="0 0 -0.122418" rpy="0 0 0"/>
+      <mass value="1"/>
+      <inertia
+      ixx="0.005564" ixy="0.0" ixz="0.0"
+      iyy="0.005636" iyz="0.0"
+      izz="0.000697"/>
+    </inertial>
+  </link>
+  
+  <!-- <joint name="arm_joint5" type="fixed">
+    <parent link="arm_link4"/>
+    <child link="arm_link5"/>
+    <origin xyz="0 0 ${L4}" rpy="0 0 0"/>
+    <axis xyz="1 0 0"/>
+  </joint> -->
+  <joint name="arm_joint5" type="revolute">
+    <parent link="arm_link4"/>
+    <child link="arm_link5"/>
+    <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.3"/>
+    <limit lower="-1.74533" upper="1.74533" effort="200" velocity="10"/>
+    <!-- <limit lower="-3" upper="3" effort="200" velocity="10"/> -->
+  </joint>
+
+<!-- Link 5 -->
+  <link name="arm_link5">
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_r6_prt.STL" scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_r6_prt.STL" scale="1 1 1"/>
+      </geometry>
+      <material name="grey"/>
+    </visual>
+
+    <inertial>
+      <origin xyz="0 0.039595 0" rpy="0 0 0"/>
+      <mass value="0.5"/>
+      <inertia
+      ixx="0.000958" ixy="0.0" ixz="0.0"
+      iyy="0.000481" iyz="0.0"
+      izz="0.000889"/>
+    </inertial>
+  </link>
+  
+  <!-- <joint name="arm_joint6" type="fixed">
+    <parent link="arm_link5"/>
+    <child link="arm_link6"/>
+    <origin xyz="0 0 ${d6}" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint> -->
+  <joint name="arm_joint6" type="revolute">
+    <parent link="arm_link5"/>
+    <child link="arm_link6"/>
+    <origin xyz="0 ${d6} 0" rpy="1.5708 0 3.1416"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="0.1"/>
+    <limit lower="-5" upper="5" effort="200" velocity="10"/>
+  </joint>
+  
+<!-- Link 6 -->
+  <link name="arm_link6">
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_test_gripper_prt.STL" scale="1 1 1"/>
+      </geometry>
+    </collision>
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://aidin_arm/meshes/aidin_arm/DH/prt_test_gripper_prt.STL" scale="1 1 1"/>
+      </geometry>
+      <material name="red"/>
+    </visual>
+
+    <inertial>
+      <origin xyz="-0.003252 0.000001 0.071944" rpy="0 0 0"/>
+      <mass value="0.5"/>
+      <!-- <mass value="2.5"/> -->
+      <inertia
+      ixx="0.001087" ixy="0.0" ixz="0.0"
+      iyy="0.001307" iyz="0.0"
+      izz="0.000489"/>
+    </inertial>
+  </link>
+
+</robot>
