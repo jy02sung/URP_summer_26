@@ -1,0 +1,24 @@
+<launch>
+  <!-- Connects aruco_ros/single to the dual_arm head_camera RGB stream and
+       publishes the detected marker's 3D pose under /aruco_ros/... -->
+
+  <arg name="markerId"          default="26"/>
+  <arg name="markerSize"        default="0.05"/>    <!-- meters, matches models/aruco_marker_26 -->
+  <arg name="marker_frame"      default="aruco_marker_frame"/>
+  <arg name="ref_frame"         default=""/>        <!-- empty -> published wrt camera_frame -->
+  <arg name="corner_refinement" default="LINES"/>    <!-- NONE, HARRIS, LINES, SUBPIX -->
+
+  <node pkg="aruco_ros" type="single" name="aruco_ros" output="screen">
+    <remap from="/image"       to="/dual_arm/head_camera/rgb/image_raw"/>
+    <remap from="/camera_info" to="/dual_arm/head_camera/rgb/camera_info"/>
+
+    <param name="image_is_rectified" value="true"/>
+    <param name="marker_size"        value="$(arg markerSize)"/>
+    <param name="marker_id"          value="$(arg markerId)"/>
+    <param name="reference_frame"    value="$(arg ref_frame)"/>
+    <param name="camera_frame"       value="Head_camera_link_optical"/>
+    <param name="marker_frame"       value="$(arg marker_frame)"/>
+    <param name="corner_refinement"  value="$(arg corner_refinement)"/>
+    <param name="min_marker_size"    value="0.005"/>  <!-- percent of image area; default 0.02 filters out small/far markers -->
+  </node>
+</launch>

@@ -6,10 +6,11 @@ int a = 0;
 
 // 현재 어느 화면에 있는지 나타내는 상태
 enum Screen {
-    SCREEN_TOP,      // modeling / simulation 선택
+    SCREEN_TOP,      // modeling / simulation / vision 선택
     SCREEN_MODELING, // 0~6 입력
     SCREEN_SPACE,    // joint / cartesian 선택
-    SCREEN_TARGET    // 0 입력 시 xyz 6개 입력
+    SCREEN_TARGET,   // 0 입력 시 xyz 6개 입력
+    SCREEN_VISION_TARGET // 0 입력 시 이송 목표 xyz 3개 입력 (물체 위치는 /aruco_ros/pose에서 자동 획득)
 };
 
 // back / b 입력인지 확인하는 함수
@@ -44,7 +45,7 @@ int main(int argc, char **argv)
         // ============================================================
         if (screen == SCREEN_TOP) {
             string top_mode;
-            cout << "\n[TOP] Select mode: modeling / simulation  (or 'q' to quit)" << endl;
+            cout << "\n[TOP] Select mode: modeling / simulation / vision  (or 'q' to quit)" << endl;
             cin >> top_mode;
 
             if (isQuit(top_mode)) {
@@ -55,6 +56,9 @@ int main(int argc, char **argv)
             }
             else if (top_mode == "simulation") {
                 screen = SCREEN_SPACE;
+            }
+            else if (top_mode == "vision") {
+                screen = SCREEN_VISION_TARGET;
             }
             else {
                 cout << "Unknown input. Try again." << endl;
@@ -217,6 +221,42 @@ int main(int argc, char **argv)
                 dual_arm_command_msg.data.push_back((float)sim_mode_flag);  // 1 또는 2
                 for (int i = 0; i < 6; i++) {
                     dual_arm_command_msg.data.push_back((float)ee_target[i]);
+                }
+            }
+        }
+
+        // ============================================================
+        // 화면 5: vision target 입력 (0 입력 시 이송 목표 xyz 3개, back으로 TOP 복귀)
+        // 물체 위치 자체는 이 노드가 아니라 dual_arm_main이 /aruco_ros/pose를 직접 구독해서 얻음.
+        // ============================================================
+        else if (screen == SCREEN_VISION_TARGET) {
+            string in;
+            cout << "\n[VISION] Enter 0 to input transport target position "
+                 << "(or 'back' to go up, 'q' to quit)" << endl;
+            cin >> in;
+
+            if (isQuit(in)) {
+                quit_requested = true;
+            }
+            else if (isBack(in)) {
+                screen = SCREEN_TOP;
+            }
+            else {
+                int sel = atoi(in.c_str());
+                if (sel == 0) {
+                    double transport_target[3];
+                    cout << "Enter transport target position [x y z] (meter, world frame):" << endl;
+                    for (int i = 0; i < 3; i++) {
+                        cin >> transport_target[i];
+                    }
+                    dual_arm_command_msg.data.push_back(3.0f);  // 모드 플래그 3 (vision pick)
+                    for (int i = 0; i < 3; i++) {
+                        dual_arm_command_msg.data.push_back((float)transport_target[i]);
+                    }
+                    do_publish = true;
+                }
+                else {
+                    cout << "Press 0 to input target, or 'back'." << endl;
                 }
             }
         }

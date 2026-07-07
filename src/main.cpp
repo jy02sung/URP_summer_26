@@ -1,4 +1,16 @@
 #include "dual_arm_function.cpp"
+#include <tf/transform_listener.h>
+#include <vector>
+
+// ArUco 인식 결과 (aruco_ros/single) - 카메라 광학 프레임 기준 pose
+geometry_msgs::PoseStamped aruco_pose_cam;
+bool aruco_pose_received = false;
+
+void msgCallbackArucoPose(const geometry_msgs::PoseStamped::ConstPtr& msg)
+{
+    aruco_pose_cam = *msg;
+    aruco_pose_received = true;
+}
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // 콜백 함수들 (현재 조인트 상태 업데이트용)
@@ -64,12 +76,18 @@ void msgCallbackRightArmJointState(const sensor_msgs::JointState::ConstPtr& msg)
 
 void msgCallbackDualArmCmd(const std_msgs::Float32MultiArray::ConstPtr& msg)
 {
-    command_mode = (int)msg->data[0];   // data[0] = 0/1/2
+    command_mode = (int)msg->data[0];   // data[0] = 0/1/2/3
 
     if (command_mode == 0) {
         // modeling: data[1..DoF] = 관절각 DoF개
         for (int i = 0; i < DoF; i++) {
             dual_arm_commandp[i] = msg->data[i + 1];
+        }
+    }
+    else if (command_mode == 3) {
+        // vision pick: data[1..3] = 이송(transport) 목표 위치 (world 기준)
+        for (int i = 0; i < 3; i++) {
+            dual_arm_commandx[i] = msg->data[i + 1];
         }
     }
     else {
@@ -125,7 +143,11 @@ int main(int argc, char **argv)
     ros::Subscriber sub_left_arm_joint_angle = nh.subscribe("/dual_arm/joint_states", 100, msgCallbackLeftArmJointState);
     ros::Subscriber sub_right_arm_joint_angle = nh.subscribe("/dual_arm/joint_states", 100, msgCallbackRightArmJointState);
     ros::Subscriber sub_dual_arm_cmd = nh.subscribe("/dual_arm/DualArmCmd_sim", 100, msgCallbackDualArmCmd);
-   
+    ros::Subscriber sub_aruco_pose = nh.subscribe("/aruco_ros/pose", 10, msgCallbackArucoPose);
+
+    // ArUco pose(카메라 프레임) -> world 프레임 변환용
+    tf::TransformListener tfListener;
+
     ros::Rate loop_rate(1000);
     ros::spinOnce();
     
@@ -205,6 +227,7 @@ int main(int argc, char **argv)
 
 
         if(callback == true){
+            bool new_trajectory_built = true;  // command_mode==3이 실패하면 false로 바뀌어 기존 궤적 재생을 유지
             // 현재 관절각을 initp(궤적 시작점) 및 IK 시드로 저장
             dual_arm_initp[0] = waist_jointp[0];
             dual_arm_initp[1] = head_jointp[0];
@@ -297,7 +320,103 @@ int main(int argc, char **argv)
                 }
             }
 
-            traj_cnt = 0;
+            // ===== 모드 3: vision pick (ArUco 검출 -> world 변환 -> 접근/파지/이송) =====
+            else if (command_mode == 3) {
+                if (!aruco_pose_received) {
+                    ROS_WARN("No /aruco_ros/pose received yet - vision pick skipped.");
+                    new_trajectory_built = false;
+                }
+                else {
+                    // 1) 카메라 프레임 pose를 world 프레임으로 변환 (ros::Time(0) = 최신 가용 tf)
+                    geometry_msgs::PoseStamped pose_in = aruco_pose_cam;
+                    pose_in.header.stamp = ros::Time(0);
+                    geometry_msgs::PoseStamped object_world;
+                    bool tf_ok = true;
+                    try {
+                        tfListener.transformPose("world", pose_in, object_world);
+                    }
+                    catch (tf::TransformException& ex) {
+                        ROS_ERROR("Vision pick TF transform failed: %s", ex.what());
+                        tf_ok = false;
+                        new_trajectory_built = false;
+                    }
+
+                    if (tf_ok) {
+                        Vector3d obj(object_world.pose.position.x,
+                                     object_world.pose.position.y,
+                                     object_world.pose.position.z);
+                        Vector3d transport_pt(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
+
+                        // 양팔 동시 파지 오프셋(물체를 y축 양쪽에서 감싸는 형태)
+                        const double straddle_offset = 0.05; // 1) 접근 시 물체 양옆 간격
+                        const double grasp_offset    = 0.02; // 2) 파지 시 좁힌 간격 (물체에 밀착)
+                        const double lift_offset     = 0.10; // 들어올리는 높이
+
+                        // 현재 양팔 EE 위치 (시작점 + 마지막 6) 복귀 목표)
+                        pinocchio::forwardKinematics(model, data, q_ik_seed);
+                        pinocchio::updateFramePlacements(model, data);
+                        Vector3d start_L = data.oMf[l_EE].translation();
+                        Vector3d start_R = data.oMf[r_EE].translation();
+
+                        std::vector<MatrixXd> pos_segs, vel_segs, acc_segs;
+                        VectorXd seed_vec = q_ik_seed;
+                        double prev_q[DoF];
+                        for (int i = 0; i < DoF; i++) prev_q[i] = dual_arm_initp[i];
+
+                        auto addSegment = [&](const Vector3d& targetL, const Vector3d& targetR) {
+                            VectorXd q_result;
+                            dualarm.SolveIK_Position(model, data, l_EE, r_EE, targetL, targetR, seed_vec, q_result);
+                            double q_cmd[DoF];
+                            for (int i = 0; i < DoF; i++) q_cmd[i] = q_result(i);
+                            MatrixXd p, v, a;
+                            dualarm.JointTrajectoryQuintic(prev_q, q_cmd, p, v, a);
+                            pos_segs.push_back(p);
+                            vel_segs.push_back(v);
+                            acc_segs.push_back(a);
+                            for (int i = 0; i < DoF; i++) prev_q[i] = q_cmd[i];
+                            seed_vec = q_result;
+                        };
+
+                        // 1) 양팔 동시 접근: 물체 양옆(y ±straddle_offset)으로
+                        addSegment(obj + Vector3d(0,  straddle_offset, 0),
+                                   obj + Vector3d(0, -straddle_offset, 0));
+                        // 2) 양팔 동시 파지: 간격을 좁혀 물체에 밀착
+                        addSegment(obj + Vector3d(0,  grasp_offset, 0),
+                                   obj + Vector3d(0, -grasp_offset, 0));
+                        // 3) 양팔 동시 들어올리기 (간격 유지한 채 위로)
+                        addSegment(obj + Vector3d(0,  grasp_offset, lift_offset),
+                                   obj + Vector3d(0, -grasp_offset, lift_offset));
+                        // 4) 양팔 동시 이송: 목표 좌표 위 lift_offset 높이로 이동
+                        addSegment(transport_pt + Vector3d(0,  grasp_offset, lift_offset),
+                                   transport_pt + Vector3d(0, -grasp_offset, lift_offset));
+                        // 5) 양팔 동시 내려놓기
+                        addSegment(transport_pt + Vector3d(0,  grasp_offset, 0),
+                                   transport_pt + Vector3d(0, -grasp_offset, 0));
+                        // 6) 양팔 동시 원래 위치로 복귀
+                        addSegment(start_L, start_R);
+
+                        ROS_INFO("Vision pick(dual-arm): object(world)=[%.3f %.3f %.3f], transport=[%.3f %.3f %.3f]",
+                                 obj.x(), obj.y(), obj.z(),
+                                 transport_pt.x(), transport_pt.y(), transport_pt.z());
+
+                        int total_rows = 0;
+                        for (auto& s : pos_segs) total_rows += s.rows();
+                        dual_arm_jointp_trajectory.resize(total_rows, DoF);
+                        dual_arm_jointv_trajectory.resize(total_rows, DoF);
+                        dual_arm_jointa_trajectory.resize(total_rows, DoF);
+                        int offset = 0;
+                        for (size_t k = 0; k < pos_segs.size(); ++k) {
+                            int r = pos_segs[k].rows();
+                            dual_arm_jointp_trajectory.block(offset, 0, r, DoF) = pos_segs[k];
+                            dual_arm_jointv_trajectory.block(offset, 0, r, DoF) = vel_segs[k];
+                            dual_arm_jointa_trajectory.block(offset, 0, r, DoF) = acc_segs[k];
+                            offset += r;
+                        }
+                    }
+                }
+            }
+
+            if (new_trajectory_built) traj_cnt = 0;
             callback = false;
         }
         else if (traj_cnt < dual_arm_jointp_trajectory.rows()){

@@ -12,6 +12,14 @@
       <uri>model://sun</uri>
     </include>
 
+    <!-- ArUco test marker for head_camera / aruco_ros detection testing -->
+    <include>
+      <uri>model://aruco_marker_26</uri>
+      <name>aruco_marker_26</name>
+      <!-- head_camera sits at ~(0.05, 0, 1.54) looking along +X at the zero pose (FK-verified) -->
+      <pose>0.35 0 1.54 0 0 0</pose>
+    </include>
+
     <!-- Focus camera on tall pendulum -->
     <gui fullscreen='0'>
       <camera name='user_camera'>

@@ -1,0 +1,15 @@
+material Aruco/Marker26
+{
+  technique
+  {
+    pass
+    {
+      lighting off
+      texture_unit
+      {
+        texture marker26_5cm.jpg
+        filtering none
+      }
+    }
+  }
+}
