@@ -6,6 +6,7 @@
   <arg name="headless" default="false"/>
   <arg name="debug" default="false"/>
 
+  <env name="GAZEBO_MODEL_PATH" value="$(find dual_arm)/models:$(optenv GAZEBO_MODEL_PATH)" />
   <!-- We resume the logic in empty_world.launch, changing only the name of the world to be launched -->
   <include file="$(find gazebo_ros)/launch/empty_world.launch">
     <arg name="world_name" value="$(find dual_arm)/worlds/rrbot.world"/>
@@ -36,6 +37,12 @@
       -J R_shoulder_yaw_joint 0
       -J R_elbow_joint 0"/>
   
-  <node pkg="dual_arm" type="main" name="main" output="screen"/>
+  <node pkg="dual_arm" type="dual_arm_main" name="main" output="screen"/>
+
+  <node name="spawn_table" pkg="gazebo_ros" type="spawn_model" 
+        args="-database cafe_table -sdf -model cafe_table -x 0.8 -y 0 -z 0" />
+
+  <node name="spawn_aruco_box" pkg="gazebo_ros" type="spawn_model" 
+        args="-file $(find dual_arm)/models/aruco_cube/aruco_cube.sdf -sdf -model aruco_box -x 0.8 -y 0 -z 0.95" />
 
 </launch>
