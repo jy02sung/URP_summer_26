@@ -1,3 +1,12 @@
+✅ Head 11DoF 추가
+✅ 카메라 마운트 (RGB-D)
+✅ ArUco 인식 → 3D 좌표
+✅ TF 변환 (카메라 → world)
+✅ 양팔 동시 파지 궤적
+✅ Tf 독립 계산 (딜레이 해결)
+✅ 임피던스 제어 (파지~내려놓기)
+✅ TaskPhase 자동 전환
+✅ 이송 오차 감소 확인
 # Dual_Arm_ROS_Simulation
 Dual Arm Robot
 * Author : Seungjun Lee
