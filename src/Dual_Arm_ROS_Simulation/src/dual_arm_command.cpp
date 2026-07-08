@@ -5,7 +5,8 @@
 
 using namespace std;
 
-double dual_arm_cmd[9] = {0,};
+// 11 DoF 명령을 담을 수 있도록 배열 크기 확장
+double dual_arm_cmd[11] = {0,};
 int a = 0;
 const double deg2rad = M_PI / 180;
 
@@ -72,29 +73,33 @@ int main(int argc, char **argv)
             continue; 
         }
         else if(a==8){
-            cout << "Please enter the 9 joint angles for the dual arm. " << endl;
+            cout << "Please enter the 11 joint angles for the dual arm. " << endl;
             cout << "Enter the target waist joint angle : " << endl;
             cin >> dual_arm_cmd[0];
-            cout << "Enter the target left arm joint angle : " << endl;
+            cout << "Enter the target left arm joint angle (4 joints) : " << endl;
             for(int i = 1; i < 5; i++){
                 cin >> dual_arm_cmd[i];
             }
-            cout << "Enter the target right arm joint angle : " << endl;
+            cout << "Enter the target right arm joint angle (4 joints) : " << endl;
             for(int i = 5; i < 9; i++){
+                cin >> dual_arm_cmd[i];
+            }
+            cout << "Enter the target head joint angle (Yaw, Pitch) : " << endl;
+            for(int i = 9; i < 11; i++){
                 cin >> dual_arm_cmd[i];
             }
         }
         else if(a==1){
             dual_arm_cmd[0] = 45;
-            for(int i=1; i<9; i++) dual_arm_cmd[i] = 0;
+            for(int i=1; i<11; i++) dual_arm_cmd[i] = 0;
         }
         else if(a==2){
-            for(int i=0; i<9; i++) dual_arm_cmd[i] = 0;
+            for(int i=0; i<11; i++) dual_arm_cmd[i] = 0;
             dual_arm_cmd[1] = -90;
             dual_arm_cmd[5] = -90;
         }
         else if(a==3){
-            for(int i=0; i<9; i++) dual_arm_cmd[i] = 0;
+            for(int i=0; i<11; i++) dual_arm_cmd[i] = 0;
             dual_arm_cmd[2] = 85;
             dual_arm_cmd[6] = -85;
         }
@@ -102,18 +107,19 @@ int main(int argc, char **argv)
             dual_arm_cmd[0] = 0;
             dual_arm_cmd[1] = -90; dual_arm_cmd[2] = 0; dual_arm_cmd[3] = 90; dual_arm_cmd[4] = -90;
             dual_arm_cmd[5] = -90; dual_arm_cmd[6] = 0; dual_arm_cmd[7] = -90; dual_arm_cmd[8] = -90;
+            dual_arm_cmd[9] = 0; dual_arm_cmd[10] = 0;
         }
         else if(a==5){
-            for(int i=0; i<9; i++) dual_arm_cmd[i] = 0;
+            for(int i=0; i<11; i++) dual_arm_cmd[i] = 0;
             dual_arm_cmd[4] = -90;
             dual_arm_cmd[8] = -90;
         }
         else if(a==6){
-            for(int i=0; i<9; i++) dual_arm_cmd[i] = 0;
+            for(int i=0; i<11; i++) dual_arm_cmd[i] = 0;
         }
 
         dual_arm_command_msg.data.clear();
-        for(int i = 0; i < 9; i++) {
+        for(int i = 0; i < 11; i++) {
             dual_arm_command_msg.data.push_back(dual_arm_cmd[i]*deg2rad);
         }
         dual_arm_cmd_pub.publish(dual_arm_command_msg);

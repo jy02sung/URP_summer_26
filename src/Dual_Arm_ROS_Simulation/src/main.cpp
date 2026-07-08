@@ -1,48 +1,51 @@
 #include "dual_arm_function.cpp"
+#include <ros/package.h> // 패키지 경로 자동 탐색용
 
-void msgCallbackWaistArmJointState(const sensor_msgs::JointState::ConstPtr& msg)
+// 알파벳 순서가 바뀌어도 안전하도록 이름으로 매칭하는 통합 콜백 함수
+void msgCallbackJointState(const sensor_msgs::JointState::ConstPtr& msg)
 {
-    waist_jointp[0] = msg->position[8];
-    waist_jointv[0] = msg->velocity[8]; 
-    waist_torque[0] = msg->effort[8];
-}
-
-void msgCallbackLeftArmJointState(const sensor_msgs::JointState::ConstPtr& msg)
-{
-    left_arm_jointp[0] = msg->position[1];
-    left_arm_jointv[0] = msg->velocity[1];
-    left_arm_torque[0] = msg->effort[1];
-    left_arm_jointp[1] = msg->position[2];
-    left_arm_jointv[1] = msg->velocity[2];
-    left_arm_torque[1] = msg->effort[2];
-    left_arm_jointp[2] = msg->position[3];
-    left_arm_jointv[2] = msg->velocity[3];
-    left_arm_torque[2] = msg->effort[3];
-    left_arm_jointp[3] = msg->position[0];
-    left_arm_jointv[3] = msg->velocity[0];
-    left_arm_torque[3] = msg->effort[0];
-}
-
-void msgCallbackRightArmJointState(const sensor_msgs::JointState::ConstPtr& msg)
-{
-    right_arm_jointp[0] = msg->position[5];
-    right_arm_jointv[0] = msg->velocity[5];
-    right_arm_torque[0] = msg->effort[5];
-    right_arm_jointp[1] = msg->position[6];
-    right_arm_jointv[1] = msg->velocity[6];
-    right_arm_torque[1] = msg->effort[6];
-    right_arm_jointp[2] = msg->position[7];
-    right_arm_jointv[2] = msg->velocity[7];
-    right_arm_torque[2] = msg->effort[7];
-    right_arm_jointp[3] = msg->position[4];
-    right_arm_jointv[3] = msg->velocity[4];
-    right_arm_torque[3] = msg->effort[4];
+    for (size_t i = 0; i < msg->name.size(); i++) {
+        if (msg->name[i] == "Waist_joint") {
+            waist_jointp[0] = msg->position[i]; waist_jointv[0] = msg->velocity[i]; waist_torque[0] = msg->effort[i];
+        }
+        else if (msg->name[i] == "L_shoulder_pitch_joint") {
+            left_arm_jointp[0] = msg->position[i]; left_arm_jointv[0] = msg->velocity[i]; left_arm_torque[0] = msg->effort[i];
+        }
+        else if (msg->name[i] == "L_shoulder_roll_joint") {
+            left_arm_jointp[1] = msg->position[i]; left_arm_jointv[1] = msg->velocity[i]; left_arm_torque[1] = msg->effort[i];
+        }
+        else if (msg->name[i] == "L_shoulder_yaw_joint") {
+            left_arm_jointp[2] = msg->position[i]; left_arm_jointv[2] = msg->velocity[i]; left_arm_torque[2] = msg->effort[i];
+        }
+        else if (msg->name[i] == "L_elbow_joint") {
+            left_arm_jointp[3] = msg->position[i]; left_arm_jointv[3] = msg->velocity[i]; left_arm_torque[3] = msg->effort[i];
+        }
+        else if (msg->name[i] == "R_shoulder_pitch_joint") {
+            right_arm_jointp[0] = msg->position[i]; right_arm_jointv[0] = msg->velocity[i]; right_arm_torque[0] = msg->effort[i];
+        }
+        else if (msg->name[i] == "R_shoulder_roll_joint") {
+            right_arm_jointp[1] = msg->position[i]; right_arm_jointv[1] = msg->velocity[i]; right_arm_torque[1] = msg->effort[i];
+        }
+        else if (msg->name[i] == "R_shoulder_yaw_joint") {
+            right_arm_jointp[2] = msg->position[i]; right_arm_jointv[2] = msg->velocity[i]; right_arm_torque[2] = msg->effort[i];
+        }
+        else if (msg->name[i] == "R_elbow_joint") {
+            right_arm_jointp[3] = msg->position[i]; right_arm_jointv[3] = msg->velocity[i]; right_arm_torque[3] = msg->effort[i];
+        }
+        else if (msg->name[i] == "Head_yaw_joint") {
+            head_jointp[0] = msg->position[i]; head_jointv[0] = msg->velocity[i]; head_torque[0] = msg->effort[i];
+        }
+        else if (msg->name[i] == "Head_pitch_joint") {
+            head_jointp[1] = msg->position[i]; head_jointv[1] = msg->velocity[i]; head_torque[1] = msg->effort[i];
+        }
+    }
 }
 
 void msgCallbackDualArmCmd(const std_msgs::Float32MultiArray::ConstPtr& msg)
 {
-    for (int i = 0; i < 9; i++) {
-        dual_arm_commandp[i] = msg-> data[i];
+    // DoF(11) 만큼 받아오도록 수정
+    for (int i = 0; i < DoF; i++) {
+        dual_arm_commandp[i] = msg->data[i];
     }
     callback = true;
 }
@@ -110,6 +113,8 @@ int main(int argc, char **argv)
         ros::Publisher dual_armjoint7_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint7_position_controller/command", 100);
         ros::Publisher dual_armjoint8_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint8_position_controller/command", 100);
         ros::Publisher dual_armjoint9_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint9_position_controller/command", 100);
+        ros::Publisher dual_armjoint10_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint10_position_controller/command", 100); // 머리 Yaw
+        ros::Publisher dual_armjoint11_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint11_position_controller/command", 100); // 머리 Pitch
     #elif ARMCTRLMODE == EFFORT
         ros::Publisher dual_armjoint1_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint1_effort_controller/command", 100);
         ros::Publisher dual_armjoint2_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint2_effort_controller/command", 100);
@@ -120,11 +125,12 @@ int main(int argc, char **argv)
         ros::Publisher dual_armjoint7_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint7_effort_controller/command", 100);
         ros::Publisher dual_armjoint8_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint8_effort_controller/command", 100);
         ros::Publisher dual_armjoint9_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint9_effort_controller/command", 100);
+        ros::Publisher dual_armjoint10_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint10_effort_controller/command", 100); // 머리 Yaw
+        ros::Publisher dual_armjoint11_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint11_effort_controller/command", 100); // 머리 Pitch
     #endif
 
-    ros::Subscriber sub_waist_joint_angle = nh.subscribe("/dual_arm/joint_states", 100, msgCallbackWaistArmJointState);
-    ros::Subscriber sub_left_arm_joint_angle = nh.subscribe("/dual_arm/joint_states", 100, msgCallbackLeftArmJointState);
-    ros::Subscriber sub_right_arm_joint_angle = nh.subscribe("/dual_arm/joint_states", 100, msgCallbackRightArmJointState);
+    // 하나로 통합된 조인트 스테이트 구독
+    ros::Subscriber sub_joint_state = nh.subscribe("/dual_arm/joint_states", 100, msgCallbackJointState);
     ros::Subscriber sub_dual_arm_cmd = nh.subscribe("/dual_arm/DualArmCmd_sim", 100, msgCallbackDualArmCmd);
     
     ros::Subscriber sub_cartesian_cmd = nh.subscribe("/dual_arm/CartesianCmd_sim", 100, msgCallbackCartesianCmd);
@@ -137,8 +143,10 @@ int main(int argc, char **argv)
     std_msgs::Float64 waist_joint_msg;
     std_msgs::Float64 shoulder_pitch_l_joint_msg, shoulder_roll_l_joint_msg, shoulder_yaw_l_joint_msg, elbow_l_joint_msg;
     std_msgs::Float64 shoulder_pitch_r_joint_msg, shoulder_roll_r_joint_msg, shoulder_yaw_r_joint_msg, elbow_r_joint_msg;
+    std_msgs::Float64 head_yaw_joint_msg, head_pitch_joint_msg;
 
-    string urdf_filename = "/home/js/catkin_ws/src/Dual_Arm_ROS_Simulation/urdf/dual_arm.urdf";
+    // 절대경로 하드코딩 제거! 패키지 경로를 자동으로 찾습니다.
+    string urdf_filename = ros::package::getPath("dual_arm") + "/urdf/dual_arm.urdf";
     
     pinocchio::Model model;
     pinocchio::urdf::buildModel(urdf_filename, model);
@@ -154,12 +162,16 @@ int main(int argc, char **argv)
             dual_arm_jointp[i + 1] = left_arm_jointp[i];
             dual_arm_jointp[i + 5] = right_arm_jointp[i];
         }
+        dual_arm_jointp[9] = head_jointp[0];
+        dual_arm_jointp[10] = head_jointp[1];
 
         dual_arm_jointv[0] = waist_jointv[0];
         for (int i = 0; i < 4; i++) {
             dual_arm_jointv[i + 1] = left_arm_jointv[i];
             dual_arm_jointv[i + 5] = right_arm_jointv[i];
         }
+        dual_arm_jointv[9] = head_jointv[0];
+        dual_arm_jointv[10] = head_jointv[1];
 
         for (int i = 0; i < DoF; i++){
             dual_arm_jointv_lpf[i] = dualarm.LowPassFilter(dual_arm_jointv[i], dual_arm_jointv_before[i], 10);
@@ -171,18 +183,24 @@ int main(int argc, char **argv)
             dual_arm_jointp_vec(i + 1) = left_arm_jointp[i];
             dual_arm_jointp_vec(i + 5) = right_arm_jointp[i];
         }
+        dual_arm_jointp_vec(9) = head_jointp[0];
+        dual_arm_jointp_vec(10) = head_jointp[1];
 
         dual_arm_jointv_vec(0) = waist_jointv[0];
         for (int i = 0; i < 4; i++) {
             dual_arm_jointv_vec(i + 1) = left_arm_jointv[i];
             dual_arm_jointv_vec(i + 5) = right_arm_jointv[i];
         }
+        dual_arm_jointv_vec(9) = head_jointv[0];
+        dual_arm_jointv_vec(10) = head_jointv[1];
 
         dual_arm_jointv_lpf_vec(0) = waist_jointv[0];
         for (int i = 0; i < 4; i++) {
             dual_arm_jointv_lpf_vec(i + 1) = left_arm_jointv[i];
             dual_arm_jointv_lpf_vec(i + 5) = right_arm_jointv[i];
         }
+        dual_arm_jointv_lpf_vec(9) = head_jointv[0];
+        dual_arm_jointv_lpf_vec(10) = head_jointv[1];
 
         // =========================================================================
         // 8번 메뉴 (관절 직접 입력 및 프리셋) 처리 블록
@@ -190,10 +208,8 @@ int main(int argc, char **argv)
         if(callback == true){
             is_cartesian_moving = false;
 
-            dual_arm_initp[0] = waist_jointp[0];
-            for (int i = 0; i < 4; i++) {
-                dual_arm_initp[i + 1] = left_arm_jointp[i];
-                dual_arm_initp[i + 5] = right_arm_jointp[i];
+            for (int i = 0; i < DoF; i++) {
+                dual_arm_initp[i] = dual_arm_jointp[i];
             }
             
             dualarm.JointTrajectoryQuintic(dual_arm_initp, dual_arm_commandp, dual_arm_jointp_trajectory, dual_arm_jointv_trajectory, dual_arm_jointa_trajectory);
@@ -205,12 +221,10 @@ int main(int argc, char **argv)
         // 9번 메뉴 (단발성 IK 후 Joint 곡선 기동) 처리 블록
         // =========================================================================
         else if (joint_ik_callback == true) {
-            is_cartesian_moving = false; // 곡선 기동이므로 false 유지
+            is_cartesian_moving = false;
 
-            dual_arm_initp[0] = waist_jointp[0];
-            for (int i = 0; i < 4; i++) {
-                dual_arm_initp[i + 1] = left_arm_jointp[i];
-                dual_arm_initp[i + 5] = right_arm_jointp[i];
+            for (int i = 0; i < DoF; i++) {
+                dual_arm_initp[i] = dual_arm_jointp[i];
             }
 
             cout << "\n[Joint IK Control] 단발성 양팔 IK 계산 시작 (Joint 곡선 기동)..." << endl;
@@ -243,7 +257,7 @@ int main(int argc, char **argv)
         // 0번 메뉴 (Cartesian 직선 궤적 계획)
         // =========================================================================
         else if (cartesian_callback == true) {
-            is_cartesian_moving = true; // 직선 모드 ON
+            is_cartesian_moving = true; 
 
             pinocchio::forwardKinematics(model, data, dual_arm_jointp_vec);
             pinocchio::updateFramePlacements(model, data);
@@ -354,6 +368,8 @@ int main(int argc, char **argv)
             shoulder_roll_r_joint_msg.data  = dual_arm_targetp[6];
             shoulder_yaw_r_joint_msg.data   = dual_arm_targetp[7];
             elbow_r_joint_msg.data          = dual_arm_targetp[8];
+            head_yaw_joint_msg.data         = dual_arm_targetp[9];
+            head_pitch_joint_msg.data       = dual_arm_targetp[10];
         #elif ARMCTRLMODE == EFFORT
             waist_joint_msg.data            = target_torque[0];
             shoulder_pitch_l_joint_msg.data = target_torque[1];
@@ -364,6 +380,8 @@ int main(int argc, char **argv)
             shoulder_roll_r_joint_msg.data  = target_torque[6];
             shoulder_yaw_r_joint_msg.data   = target_torque[7];
             elbow_r_joint_msg.data          = target_torque[8];
+            head_yaw_joint_msg.data         = target_torque[9];
+            head_pitch_joint_msg.data       = target_torque[10];
         #endif
     
         dual_armjoint1_pub.publish(waist_joint_msg);
@@ -375,6 +393,8 @@ int main(int argc, char **argv)
         dual_armjoint7_pub.publish(shoulder_roll_r_joint_msg);
         dual_armjoint8_pub.publish(shoulder_yaw_r_joint_msg);
         dual_armjoint9_pub.publish(elbow_r_joint_msg);
+        dual_armjoint10_pub.publish(head_yaw_joint_msg);
+        dual_armjoint11_pub.publish(head_pitch_joint_msg);
 
         loop_rate.sleep();
         ros::spinOnce();

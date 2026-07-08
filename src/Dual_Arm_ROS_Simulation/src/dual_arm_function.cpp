@@ -15,7 +15,7 @@ double DualArmControl::LowPassFilter(double &input, double &output_before, doubl
 // -----------------------------------Trajectory Planning----------------------------------//
 void DualArmControl::JointTrajectoryTrapezoidal(double* q_ini, double* q_cmd, MatrixXd& q_out, MatrixXd& q_dot_out)
 {
-	double q_dot_des = 0.6; //rad/s
+	double q_dot_des = 1.2; //rad/s
 	double q_double_dot_des = 1; //rad/s^2
 
 	double max_q_error = 0;

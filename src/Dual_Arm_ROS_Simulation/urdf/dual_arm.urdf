@@ -362,6 +362,29 @@
     <dynamics damping="1"/>
     <limit effort="30" lower="-1.57" upper="1.57" velocity="8.5"/>
   </joint>
+  <link name="Neck_link">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="0.05"/>
+      <inertia ixx="1E-5" ixy="0" ixz="0" iyy="1E-5" iyz="0" izz="1E-5"/>
+    </inertial>
+  </link>
+  <joint name="Head_yaw_joint" type="revolute">
+    <origin rpy="0 0 0" xyz="-0.0027205 0 0.45287"/>
+    <parent link="Torso"/>
+    <child link="Neck_link"/>
+    <axis xyz="0 0 1"/>
+    <dynamics damping="1"/>
+    <limit effort="30" lower="-1.57" upper="1.57" velocity="5"/>
+  </joint>
+  <joint name="Head_pitch_joint" type="revolute">
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <parent link="Neck_link"/>
+    <child link="Head"/>
+    <axis xyz="0 1 0"/>
+    <dynamics damping="1"/>
+    <limit effort="30" lower="-1.0" upper="1.0" velocity="5"/>
+  </joint>
   <link name="Head">
     <inertial>
       <origin rpy="0 0 0" xyz="0.022307 0.000408 0.104941"/>
@@ -384,12 +407,6 @@
       </geometry>
     </collision>
   </link>
-  <joint name="Head_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="-0.0027205 0 0.45287"/>
-    <parent link="Torso"/>
-    <child link="Head"/>
-    <axis xyz="0 0 0"/>
-  </joint>
   <link name="L_hip">
     <inertial>
       <origin rpy="0 0 0" xyz="-0.076146 -0.000144 -0.068558"/>
@@ -690,106 +707,6 @@
     <dynamics damping="1"/>
     <limit effort="20" lower="-0.7854" upper="0.7854" velocity="15"/>
   </joint>
-  <!-- Position Control-->
-  <!-- <transmission name="tran1">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="Waist_joint">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>  
-    </joint>
-    <actuator name="motor1">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-      <mechanicalReduction>50</mechanicalReduction>
-    </actuator>
-  </transmission>
-
-  <transmission name="tran2">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="L_shoulder_pitch_joint">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-    </joint>
-    <actuator name="motor2">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-      <mechanicalReduction>50</mechanicalReduction>
-    </actuator>
-  </transmission>
-
-  <transmission name="tran3">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="L_shoulder_roll_joint">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-    </joint>
-    <actuator name="motor3">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-      <mechanicalReduction>50</mechanicalReduction>
-    </actuator>
-  </transmission>
-
-  <transmission name="tran4">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="L_shoulder_yaw_joint">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-    </joint>
-    <actuator name="motor4">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-      <mechanicalReduction>50</mechanicalReduction>
-    </actuator>
-  </transmission>
-
-  <transmission name="tran5">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="L_elbow_joint">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-    </joint>
-    <actuator name="motor5">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-      <mechanicalReduction>50</mechanicalReduction>
-    </actuator>
-  </transmission>
-
-  <transmission name="tran6">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="R_shoulder_pitch_joint">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-    </joint>
-    <actuator name="motor6">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-      <mechanicalReduction>50</mechanicalReduction>
-    </actuator>
-  </transmission>
-
-  <transmission name="tran7">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="R_shoulder_roll_joint">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-    </joint>
-    <actuator name="motor7">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-      <mechanicalReduction>50</mechanicalReduction>
-    </actuator>
-  </transmission>
-
-  <transmission name="tran8">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="R_shoulder_yaw_joint">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-    </joint>
-    <actuator name="motor8">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-      <mechanicalReduction>50</mechanicalReduction>
-    </actuator>
-  </transmission>
-
-  <transmission name="tran9">
-    <type>transmission_interface/SimpleTransmission</type>
-    <joint name="R_elbow_joint">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-    </joint>
-    <actuator name="motor9">
-      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface> 
-      <mechanicalReduction>50</mechanicalReduction>
-    </actuator>
-  </transmission> -->
-  <!-- Effort Control -->
   <transmission name="tran1">
     <type>transmission_interface/SimpleTransmission</type>
     <joint name="Waist_joint">
@@ -876,6 +793,26 @@
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
     </joint>
     <actuator name="motor9">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="tran_head_yaw">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="Head_yaw_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor_head_yaw">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="tran_head_pitch">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="Head_pitch_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor_head_pitch">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
       <mechanicalReduction>1</mechanicalReduction>
     </actuator>

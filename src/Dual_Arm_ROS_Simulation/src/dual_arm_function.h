@@ -36,7 +36,9 @@ using namespace Eigen;
 // 전역 변수 선언
 const double deg2rad = M_PI / 180;
 const double rad2deg = 180 / M_PI;
-const int DoF = 9;
+
+// 머리의 Yaw, Pitch 관절 2개가 추가되어 자유도를 11로 변경합니다.
+const int DoF = 11; 
 const double SAMPLING_TIME = 0.001;
 const double SAMPLING_TIME_TRAJ = 0.001;
 
@@ -53,6 +55,11 @@ double left_arm_torque[4] = {0,};
 double right_arm_jointp[4] = {0,};
 double right_arm_jointv[4] = {0,};
 double right_arm_torque[4] = {0,};
+
+// 머리 관절용 상태 변수 추가
+double head_jointp[2] = {0,};
+double head_jointv[2] = {0,};
+double head_torque[2] = {0,};
 
 double dual_arm_jointp[DoF] = {0,};
 double dual_arm_jointv[DoF] = {0,};
@@ -75,8 +82,9 @@ MatrixXd dual_arm_jointp_trajectory = MatrixXd::Zero(1,DoF);
 MatrixXd dual_arm_jointv_trajectory = MatrixXd::Zero(1,DoF);
 MatrixXd dual_arm_jointa_trajectory = MatrixXd::Zero(1,DoF);
 
-double Kp[DoF] = { 500, 500, 500, 500, 500, 500, 500, 500, 500 };
-double Kd[DoF] = { 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+// 뒤에 머리 제어를 위한 PD 게인 추가 (머리는 부하가 적으므로 게인을 상대적으로 낮게 설정)
+double Kp[DoF] = { 500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500 };
+double Kd[DoF] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
 
 double PD_torque[DoF] = {0, };
 double PD_acc[DoF] = {0, };
