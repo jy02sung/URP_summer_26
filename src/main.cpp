@@ -5,12 +5,38 @@
 // ArUco 인식 결과 (aruco_ros/single) - 카메라 광학 프레임 기준 pose
 geometry_msgs::PoseStamped aruco_pose_cam;
 bool aruco_pose_received = false;
+unsigned long aruco_pose_seq = 0;   // 콜백마다 증가. Head 스캔 중 "새 프레임 도착"을 감지하기 위한 시퀀스 번호
+                                     // (aruco_pose_cam 값 자체는 새 메시지가 올 때까지 안 바뀌므로 값만 봐서는 새 프레임인지 알 수 없음)
 
 void msgCallbackArucoPose(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
     aruco_pose_cam = *msg;
     aruco_pose_received = true;
+    aruco_pose_seq++;
 }
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Head 마커 탐색 (PHASE_SCAN)
+// command_mode==3(vision pick) 진입 시 Head를 고정 자세(HEAD_SCAN_YAW/PITCH)로 이동시키고 ArUco 검출을 기다린다.
+// P0 진단 결과: Head_pitch는 +방향이 아래(물체 쪽)를 향한다 (좌표계 직관과 반대).
+// 정지 후 0.5s 대기 -> 그 이후 도착하는 /aruco_ros/pose를 연속 3프레임 비교해서 서로 1cm 이내로
+// 일치하면 검출 확정. 확인 시간이 타임아웃을 넘으면 ROS_WARN을 띄우고 실패 처리한다.
+enum ScanStep { SCAN_MOVE, SCAN_SETTLE, SCAN_CHECK };
+
+bool scan_active = false;
+int scan_step = SCAN_MOVE;
+int scan_wait_cnt = 0;
+unsigned long scan_last_seq = 0;
+std::vector<Vector3d> scan_match_buf;  // 연속 프레임 일치 판정용 버퍼 (카메라 프레임 좌표)
+double scan_q[DoF] = {0,};             // 스캔 진행 중 "현재 명령 관절각" (head만 갱신, 나머지는 스캔 시작 시점 값 유지)
+
+const double HEAD_SCAN_YAW            = 0.0;
+const double HEAD_SCAN_PITCH          = 0.5236;  // P0 진단 결과: pitch +방향이 물체를 내려다보는 방향
+const int    SCAN_SETTLE_TICKS        = 500;     // 0.5s @ 1000Hz - 정지 후 카메라/인식 안정화 대기
+const int    SCAN_CHECK_TIMEOUT_TICKS = 4000;    // 4s - 이 안에 3프레임 일치를 못 찾으면 실패 처리
+                                                  // (실측: aruco_ros 인식 속도가 ~1.5~2Hz에 간헐적으로 최대 ~1s 갭이 있음)
+const int    SCAN_MATCH_FRAMES        = 3;       // 연속 일치 판정에 필요한 프레임 수
+const double SCAN_MATCH_TOL           = 0.01;    // [m] 연속 프레임 간 허용 오차
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // 콜백 함수들 (현재 조인트 상태 업데이트용)
@@ -199,7 +225,236 @@ int main(int argc, char **argv)
     // ===== 추가: EE 프레임 ID는 불변이므로 루프 밖에서 한 번만 구함 =====
     pinocchio::FrameIndex l_EE = model.getFrameId("L_EE_joint");
     pinocchio::FrameIndex r_EE = model.getFrameId("R_EE_joint");
-    
+
+    // ===== Head 자동 스캔: 다음 웨이포인트로 Head만 이동시키는 단일 세그먼트를 만들어 재생 준비 =====
+    // 다른 관절(waist/양팔)은 scan_q에 저장된 직전 값을 그대로 유지한다.
+    auto startScanMoveTo = [&](double yaw, double pitch) {
+        double q_cmd[DoF];
+        for (int i = 0; i < DoF; i++) q_cmd[i] = scan_q[i];
+        q_cmd[1] = yaw;
+        q_cmd[2] = pitch;
+
+        MatrixXd p, v, a;
+        dualarm.JointTrajectoryQuintic(scan_q, q_cmd, p, v, a);
+        dual_arm_jointp_trajectory = p;
+        dual_arm_jointv_trajectory = v;
+        dual_arm_jointa_trajectory = a;
+        dual_arm_phase_trajectory.resize(p.rows());
+        dual_arm_phase_trajectory.setConstant(PHASE_SCAN);
+
+        for (int i = 0; i < DoF; i++) scan_q[i] = q_cmd[i];
+        traj_cnt = 0;
+        traj_done_published = false;
+        scan_step = SCAN_MOVE;
+    };
+
+    // ===== Head 스캔으로 확정된 검출 결과로 기존 양팔 파지 파이프라인(접근~복귀 6세그먼트)을 생성 =====
+    // base_q: 파이프라인 시작 시점의 "현재 관절각"(waist/양팔은 스캔 시작 시점 값, head는 스캔이 멈춘 실제 웨이포인트).
+    // 반환값 false면 TF 변환 실패 -> 궤적 생성 안 됨(호출부에서 실패 처리).
+    auto buildGraspPipelineFromDetection = [&](const double* base_q) -> bool {
+        geometry_msgs::PoseStamped pose_in = aruco_pose_cam;
+        pose_in.header.stamp = ros::Time(0);
+        geometry_msgs::PoseStamped object_world;
+        try {
+            tfListener.transformPose("world", pose_in, object_world);
+        }
+        catch (tf::TransformException& ex) {
+            ROS_ERROR("Vision pick TF transform failed: %s", ex.what());
+            return false;
+        }
+
+        // aruco_ros가 보고하는 pose는 "마커 패치"의 pose이지 박스 중심이 아니다.
+        // aruco_box_26/model.sdf: 마커 패치가 박스 로컬 -X면에 pose x=-0.0505로 붙어있음(박스 10cm 절반+마커두께),
+        // 이 world의 aruco_box_26은 항상 회전 없이(rpy=0) 스폰되므로 박스 로컬 -X = world -X로 고정이다.
+        // 박스 중심 = 마커 위치 + (0.0505, 0, 0).
+        // (주의: 처음에는 pose의 orientation(Z축=마커 법선)으로 회전에 무관하게 일반화해서 보정하려 했으나,
+        //  이 시야각(오블리크)에서는 ArUco의 orientation 추정 자체가 부정확해서 오히려 오차가 커짐을 실측으로
+        //  확인함. position(위치) 추정은 안정적이므로, 이 데모 world처럼 물체가 항상 축정렬로 스폰되는
+        //  경우엔 world-frame 고정 오프셋이 orientation 기반 보정보다 더 안정적이다.)
+        // (이 보정 없이 마커 위치를 그대로 물체 중심으로 쓰면 grasp_offset=4.5cm 스퀴즈가 실제 박스 표면을
+        //  몇 cm씩 빗나가 파지가 전혀 안 되는 문제가 있었음 - 실측으로 확인.)
+        const double MARKER_TO_BOX_CENTER = 0.0505;
+
+        Vector3d obj = Vector3d(object_world.pose.position.x,
+                                 object_world.pose.position.y,
+                                 object_world.pose.position.z)
+                       + Vector3d(MARKER_TO_BOX_CENTER, 0, 0);
+        Vector3d transport_pt(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
+
+        // 양팔 동시 파지 간격(물체를 y축 양쪽에서 감싸는 형태)
+        // aruco_box_26 기준: 10cm 정육면체, y방향 half-width = 0.05m
+        const double grasp_offset = 0.045;  // 물체/이송목표 좌우 간격 (표면 안쪽 5mm 압착)
+
+        VectorXd base_seed(DoF);
+        for (int i = 0; i < DoF; i++) base_seed(i) = base_q[i];
+
+        pinocchio::forwardKinematics(model, data, base_seed);
+        pinocchio::updateFramePlacements(model, data);
+        Vector3d start_L = data.oMf[l_EE].translation();
+        Vector3d start_R = data.oMf[r_EE].translation();
+
+        // 물체/이송목표 좌우 접근점 (y축 양쪽에서 감싸는 자세, z는 각각 물체/이송목표 높이)
+        Vector3d objL = obj + Vector3d(0, grasp_offset, 0);
+        Vector3d objR = obj + Vector3d(0, -grasp_offset, 0);
+        Vector3d transportL = transport_pt + Vector3d(0, grasp_offset, 0);
+        Vector3d transportR = transport_pt + Vector3d(0, -grasp_offset, 0);
+
+        // pick_pedestal(world 파일)이 파지점 바로 아래(z 1.05~1.15)에 y로 걸쳐 있어서, 시작 자세에서
+        // objL/R로 곧장 3D 직선 이동하면 z가 받침대 상판보다 낮은 구간에서 x,y가 이미 받침대 영역에
+        // 들어가 팔이 모서리에 부딪힌다. 그래서 접근을 2단계로 나눈다: 먼저 파지 높이(obj.z, 받침대
+        // 상판보다 5cm 위)를 유지한 채 받침대 바깥쪽으로 STANDOFF_Y만큼 더 벌어진 standoff 지점으로
+        // 이동하고, 그다음 그 높이를 유지한 채 y 방향으로만 직선 이동해 파지점에 들어간다 - 마지막
+        // 구간은 항상 받침대보다 높은 높이에서만 움직이므로 부딪힐 수 없다.
+        const double STANDOFF_Y = 0.15;  // 받침대 y 반폭(0.06)보다 충분히 큰 여유
+        Vector3d standoffL = objL + Vector3d(0, STANDOFF_Y, 0);
+        Vector3d standoffR = objR + Vector3d(0, -STANDOFF_Y, 0);
+
+        // 파지 직후 곧바로 파지점->이송목표 대각선 직선으로 이동하면 받침대/바닥 근처를 스치듯 지나갈
+        // 수 있다. 스퀴즈를 유지한 채(PHASE_GRASP_TO_PLACE) 먼저 수직으로 LIFT_HEIGHT만큼 들어올린 뒤,
+        // 그 높이에서 이송목표로 이동한다.
+        const double LIFT_HEIGHT = 0.10;  // 파지 높이에서 들어올릴 여유 [m]
+        Vector3d liftL = objL + Vector3d(0, 0, LIFT_HEIGHT);
+        Vector3d liftR = objR + Vector3d(0, 0, LIFT_HEIGHT);
+
+        std::vector<MatrixXd> pos_segs, vel_segs, acc_segs;
+        std::vector<int> seg_phase;   // 세그먼트별 TaskPhase 태그 (재생 중 자동 전환용)
+        VectorXd seed_vec = base_seed;
+
+        // Cartesian 직선 구간 하나를 만들어 세그먼트 목록에 추가.
+        // CartesianLineTrajectory로 6D(L+R) 직선 경로를 만들고, 매 웨이포인트마다 DLS IK를 풀어
+        // 관절각 시퀀스로 변환한 뒤, 위치->속도->가속도를 중심차분으로 계산한다 (mode 2 cartesian sim과 동일 방식).
+        auto addCartesianSegment = [&](const Vector3d& sL, const Vector3d& gL,
+                                        const Vector3d& sR, const Vector3d& gR, int phase) {
+            MatrixXd cart_p, cart_v, cart_a;
+            dualarm.CartesianLineTrajectory(sL, gL, sR, gR, cart_p, cart_v, cart_a);
+            int steps = cart_p.rows();
+
+            MatrixXd jp(steps, DoF), jv(steps, DoF), ja(steps, DoF);
+
+            // 1) 매 웨이포인트 IK -> 관절각 시퀀스
+            for (int k = 0; k < steps; k++) {
+                Vector3d pL(cart_p(k,0), cart_p(k,1), cart_p(k,2));
+                Vector3d pR(cart_p(k,3), cart_p(k,4), cart_p(k,5));
+                VectorXd q_k;
+                dualarm.SolveIK_Position(model, data, l_EE, r_EE, pL, pR, seed_vec, q_k);
+                for (int i = 0; i < DoF; i++) jp(k, i) = q_k(i);
+                seed_vec = q_k;   // 다음 웨이포인트/다음 세그먼트로 시드 연속성 유지
+            }
+
+            // 2) 중심차분으로 속도 계산 (양 끝단은 전진/후진 차분)
+            jv.setZero();
+            for (int k = 1; k < steps - 1; k++)
+                for (int i = 0; i < DoF; i++)
+                    jv(k, i) = (jp(k+1, i) - jp(k-1, i)) / (2.0*SAMPLING_TIME_TRAJ);
+            if (steps >= 2) {
+                for (int i = 0; i < DoF; i++) {
+                    jv(0, i)       = (jp(1, i) - jp(0, i)) / SAMPLING_TIME_TRAJ;
+                    jv(steps-1, i) = (jp(steps-1, i) - jp(steps-2, i)) / SAMPLING_TIME_TRAJ;
+                }
+            }
+
+            // 3) 속도를 다시 중심차분해서 가속도 계산
+            ja.setZero();
+            for (int k = 1; k < steps - 1; k++)
+                for (int i = 0; i < DoF; i++)
+                    ja(k, i) = (jv(k+1, i) - jv(k-1, i)) / (2.0*SAMPLING_TIME_TRAJ);
+
+            pos_segs.push_back(jp);
+            vel_segs.push_back(jv);
+            acc_segs.push_back(ja);
+            seg_phase.push_back(phase);
+        };
+
+        // ===== 전체 동작 순서 =====
+        // 1) 팔을 물체 옆 standoff 지점(파지 높이 유지, 받침대 바깥쪽)으로 이동
+        addCartesianSegment(start_L, standoffL, start_R, standoffR, PHASE_APPROACH);
+
+        // 1b) standoff -> 파지 위치로 y 방향 직선 접근 (파지 높이를 그대로 유지하므로 받침대와 부딪히지 않음)
+        addCartesianSegment(standoffL, objL, standoffR, objR, PHASE_APPROACH);
+
+        // 2) 파지 위치에서 수직으로 들어올리기. 이 구간부터 PHASE_GRASP_TO_PLACE로 태깅되어 임피던스
+        //    제어가 켜지고, 양팔 스퀴즈(grasp_offset) 마찰로 물체를 실제로 붙잡아 든다.
+        addCartesianSegment(objL, liftL, objR, liftR, PHASE_GRASP_TO_PLACE);
+
+        // 2b) 들어올린 높이를 유지한 채 목표 지점으로 이동 (계속 PHASE_GRASP_TO_PLACE, 스퀴즈 유지)
+        addCartesianSegment(liftL, transportL, liftR, transportR, PHASE_GRASP_TO_PLACE);
+
+        // 3) 내려놓기 완료 -> 원래 위치로 복귀
+        addCartesianSegment(transportL, start_L, transportR, start_R, PHASE_RETURN);
+
+        ROS_INFO("Vision pick(dual-arm): object(world)=[%.3f %.3f %.3f], transport=[%.3f %.3f %.3f]",
+                 obj.x(), obj.y(), obj.z(),
+                 transport_pt.x(), transport_pt.y(), transport_pt.z());
+
+        int total_rows = 0;
+        for (auto& s : pos_segs) total_rows += s.rows();
+        dual_arm_jointp_trajectory.resize(total_rows, DoF);
+        dual_arm_jointv_trajectory.resize(total_rows, DoF);
+        dual_arm_jointa_trajectory.resize(total_rows, DoF);
+        dual_arm_phase_trajectory.resize(total_rows);
+        int offset = 0;
+        for (size_t k = 0; k < pos_segs.size(); ++k) {
+            int r = pos_segs[k].rows();
+            dual_arm_jointp_trajectory.block(offset, 0, r, DoF) = pos_segs[k];
+            dual_arm_jointv_trajectory.block(offset, 0, r, DoF) = vel_segs[k];
+            dual_arm_jointa_trajectory.block(offset, 0, r, DoF) = acc_segs[k];
+            dual_arm_phase_trajectory.segment(offset, r).setConstant(seg_phase[k]);
+            offset += r;
+        }
+
+        traj_cnt = 0;
+        traj_done_published = false;
+        return true;
+    };
+
+    // ===== Head 스캔 상태머신 진행 (현재 웨이포인트 이동/재생이 끝난 뒤 매 tick 호출) =====
+    auto runScanStep = [&]() {
+        if (scan_step == SCAN_MOVE) {
+            // 방금 웨이포인트 이동이 끝남 -> 정지 대기(SETTLE) 시작
+            scan_step = SCAN_SETTLE;
+            scan_wait_cnt = 0;
+        }
+        else if (scan_step == SCAN_SETTLE) {
+            scan_wait_cnt++;
+            if (scan_wait_cnt >= SCAN_SETTLE_TICKS) {
+                scan_step = SCAN_CHECK;
+                scan_wait_cnt = 0;
+                scan_match_buf.clear();
+                scan_last_seq = aruco_pose_seq;   // 이 시점 이후 도착하는 프레임만 카운트
+            }
+        }
+        else if (scan_step == SCAN_CHECK) {
+            if (aruco_pose_received && aruco_pose_seq != scan_last_seq) {
+                scan_last_seq = aruco_pose_seq;
+                Vector3d p(aruco_pose_cam.pose.position.x,
+                           aruco_pose_cam.pose.position.y,
+                           aruco_pose_cam.pose.position.z);
+                if (!scan_match_buf.empty() && (p - scan_match_buf.back()).norm() > SCAN_MATCH_TOL) {
+                    scan_match_buf.clear();   // 직전 프레임과 불일치 -> 처음부터 다시 셈
+                }
+                scan_match_buf.push_back(p);
+            }
+
+            if ((int)scan_match_buf.size() >= SCAN_MATCH_FRAMES) {
+                ROS_INFO("Head scan: marker confirmed (yaw=%.1fdeg, pitch=%.1fdeg)",
+                         HEAD_SCAN_YAW * rad2deg, HEAD_SCAN_PITCH * rad2deg);
+                scan_active = false;
+                if (!buildGraspPipelineFromDetection(scan_q)) {
+                    task_phase = PHASE_APPROACH;   // TF 실패 -> 실패 처리, 접근 단계로 리셋
+                }
+                return;
+            }
+
+            scan_wait_cnt++;
+            if (scan_wait_cnt >= SCAN_CHECK_TIMEOUT_TICKS) {
+                ROS_WARN("Head scan: object not found at scan pose (yaw=%.1fdeg, pitch=%.1fdeg).",
+                         HEAD_SCAN_YAW * rad2deg, HEAD_SCAN_PITCH * rad2deg);
+                scan_active = false;
+                task_phase = PHASE_APPROACH;   // 실패 처리: 접근 단계로 리셋, 마지막 자세에서 정지 유지
+            }
+        }
+    };
+
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     while(ros::ok())
@@ -260,6 +515,7 @@ int main(int argc, char **argv)
 
         if(callback == true){
             bool new_trajectory_built = true;  // command_mode==3이 실패하면 false로 바뀌어 기존 궤적 재생을 유지
+
             // 현재 관절각을 initp(궤적 시작점) 및 IK 시드로 저장
             dual_arm_initp[0] = waist_jointp[0];
             dual_arm_initp[1] = head_jointp[0];
@@ -359,114 +615,20 @@ int main(int argc, char **argv)
                 dual_arm_phase_trajectory.setConstant(steps, PHASE_APPROACH);
             }
 
-            // ===== 모드 3: vision pick (ArUco 검출 -> world 변환 -> 접근/파지/이송) =====
+            // ===== 모드 3: vision pick (Head 이동 -> ArUco 검출 -> world 변환 -> 파지/이송/복귀) =====
+            // 새 vision pick 명령이 들어올 때마다 항상 검출부터 새로 시작한다 - 이전에 우연히 잡혔을 수
+            // 있는 오래된 aruco_pose_cam을 그대로 재사용하지 않기 위해 aruco_pose_received를 강제로 리셋한다.
+            // (그 다음 실제 파지 파이프라인 생성은 검출을 확정한 뒤 runScanStep()에서 수행된다.)
             else if (command_mode == 3) {
-                if (!aruco_pose_received) {
-                    ROS_WARN("No /aruco_ros/pose received yet - vision pick skipped.");
-                    new_trajectory_built = false;
-                }
-                else {
-                    // 1) 카메라 프레임 pose를 world 프레임으로 변환 (ros::Time(0) = 최신 가용 tf)
-                    geometry_msgs::PoseStamped pose_in = aruco_pose_cam;
-                    pose_in.header.stamp = ros::Time(0);
-                    geometry_msgs::PoseStamped object_world;
-                    bool tf_ok = true;
-                    try {
-                        tfListener.transformPose("world", pose_in, object_world);
-                    }
-                    catch (tf::TransformException& ex) {
-                        ROS_ERROR("Vision pick TF transform failed: %s", ex.what());
-                        tf_ok = false;
-                        new_trajectory_built = false;
-                    }
+                aruco_pose_received = false;
+                scan_match_buf.clear();
+                for (int i = 0; i < DoF; i++) scan_q[i] = dual_arm_initp[i];
 
-                    if (tf_ok) {
-                        Vector3d obj(object_world.pose.position.x,
-                                     object_world.pose.position.y,
-                                     object_world.pose.position.z);
-                        Vector3d transport_pt(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
+                ROS_INFO("Vision pick: moving head to scan pose (yaw=%.1fdeg, pitch=%.1fdeg) and checking for marker.",
+                         HEAD_SCAN_YAW * rad2deg, HEAD_SCAN_PITCH * rad2deg);
 
-                        // 양팔 동시 파지 오프셋(물체를 y축 양쪽에서 감싸는 형태)
-                        const double straddle_offset = 0.05; // 1) 접근 시 물체 양옆 간격
-                        const double grasp_offset    = 0.02; // 2) 파지 시 좁힌 간격 (물체에 밀착)
-                        const double lift_offset     = 0.10; // 들어올리는 높이
-
-                        // 현재 양팔 EE 위치 (시작점 + 마지막 6) 복귀 목표)
-                        pinocchio::forwardKinematics(model, data, q_ik_seed);
-                        pinocchio::updateFramePlacements(model, data);
-                        Vector3d start_L = data.oMf[l_EE].translation();
-                        Vector3d start_R = data.oMf[r_EE].translation();
-
-                        std::vector<MatrixXd> pos_segs, vel_segs, acc_segs;
-                        std::vector<int> seg_phase;   // 세그먼트별 TaskPhase 태그 (재생 중 자동 전환용)
-                        VectorXd seed_vec = q_ik_seed;
-                        double prev_q[DoF];
-                        for (int i = 0; i < DoF; i++) prev_q[i] = dual_arm_initp[i];
-
-                        auto addSegment = [&](const Vector3d& targetL, const Vector3d& targetR) {
-                            VectorXd q_result;
-                            dualarm.SolveIK_Position(model, data, l_EE, r_EE, targetL, targetR, seed_vec, q_result);
-                            double q_cmd[DoF];
-                            for (int i = 0; i < DoF; i++) q_cmd[i] = q_result(i);
-                            MatrixXd p, v, a;
-                            dualarm.JointTrajectoryQuintic(prev_q, q_cmd, p, v, a);
-                            pos_segs.push_back(p);
-                            vel_segs.push_back(v);
-                            acc_segs.push_back(a);
-                            for (int i = 0; i < DoF; i++) prev_q[i] = q_cmd[i];
-                            seed_vec = q_result;
-                        };
-
-                        // 1) 양팔 동시 접근: 물체 양옆(y ±straddle_offset)으로 -> 접근 단계(임피던스 OFF)
-                        addSegment(obj + Vector3d(0,  straddle_offset, 0),
-                                   obj + Vector3d(0, -straddle_offset, 0));
-                        seg_phase.push_back(PHASE_APPROACH);
-
-                        // 2) 양팔 동시 파지: 간격을 좁혀 물체에 밀착 -> 파지 시작, 임피던스 ON
-                        addSegment(obj + Vector3d(0,  grasp_offset, 0),
-                                   obj + Vector3d(0, -grasp_offset, 0));
-                        seg_phase.push_back(PHASE_GRASP_TO_PLACE);
-
-                        // 3) 양팔 동시 들어올리기 (간격 유지한 채 위로) -> 임피던스 ON 유지
-                        addSegment(obj + Vector3d(0,  grasp_offset, lift_offset),
-                                   obj + Vector3d(0, -grasp_offset, lift_offset));
-                        seg_phase.push_back(PHASE_GRASP_TO_PLACE);
-
-                        // 4) 양팔 동시 이송: 목표 좌표 위 lift_offset 높이로 이동 -> 임피던스 ON 유지
-                        addSegment(transport_pt + Vector3d(0,  grasp_offset, lift_offset),
-                                   transport_pt + Vector3d(0, -grasp_offset, lift_offset));
-                        seg_phase.push_back(PHASE_GRASP_TO_PLACE);
-
-                        // 5) 양팔 동시 내려놓기 -> 내려놓기 완료 시점까지 임피던스 ON
-                        addSegment(transport_pt + Vector3d(0,  grasp_offset, 0),
-                                   transport_pt + Vector3d(0, -grasp_offset, 0));
-                        seg_phase.push_back(PHASE_GRASP_TO_PLACE);
-
-                        // 6) 양팔 동시 원래 위치로 복귀 -> 복귀 단계, 임피던스 OFF
-                        addSegment(start_L, start_R);
-                        seg_phase.push_back(PHASE_RETURN);
-
-                        ROS_INFO("Vision pick(dual-arm): object(world)=[%.3f %.3f %.3f], transport=[%.3f %.3f %.3f]",
-                                 obj.x(), obj.y(), obj.z(),
-                                 transport_pt.x(), transport_pt.y(), transport_pt.z());
-
-                        int total_rows = 0;
-                        for (auto& s : pos_segs) total_rows += s.rows();
-                        dual_arm_jointp_trajectory.resize(total_rows, DoF);
-                        dual_arm_jointv_trajectory.resize(total_rows, DoF);
-                        dual_arm_jointa_trajectory.resize(total_rows, DoF);
-                        dual_arm_phase_trajectory.resize(total_rows);
-                        int offset = 0;
-                        for (size_t k = 0; k < pos_segs.size(); ++k) {
-                            int r = pos_segs[k].rows();
-                            dual_arm_jointp_trajectory.block(offset, 0, r, DoF) = pos_segs[k];
-                            dual_arm_jointv_trajectory.block(offset, 0, r, DoF) = vel_segs[k];
-                            dual_arm_jointa_trajectory.block(offset, 0, r, DoF) = acc_segs[k];
-                            dual_arm_phase_trajectory.segment(offset, r).setConstant(seg_phase[k]);
-                            offset += r;
-                        }
-                    }
-                }
+                startScanMoveTo(HEAD_SCAN_YAW, HEAD_SCAN_PITCH);
+                scan_active = true;
             }
 
             if (new_trajectory_built) {
@@ -511,8 +673,17 @@ int main(int argc, char **argv)
                 dual_arm_targeta_vec(i) = PD_acc[i];
             }
 
-            // 궤적(복귀 포함) 실행이 막 끝난 시점: 접근 단계로 리셋 + 완료 알림, 딱 한 번만
-            if (!traj_done_published) {
+            if (scan_active) {
+                // Head 자동 스캔 진행 중: 방금 웨이포인트 이동이 끝났거나(SCAN_MOVE),
+                // 정지 대기(SCAN_SETTLE) 또는 인식 확인(SCAN_CHECK) 중 -> 매 tick 상태머신 진행.
+                // 검출이 확정되면 이 안에서 파지 파이프라인이 새로 만들어져 traj_cnt가 리셋되므로,
+                // 다음 tick부터는 이 else 분기가 아니라 위쪽 재생 분기가 자동으로 이어받는다.
+                runScanStep();
+            }
+            else if (!traj_done_published) {
+                // 궤적(복귀 포함) 실행이 막 끝난 시점: 접근 단계로 리셋 + 완료 알림, 딱 한 번만
+                // (스캔 실패로 여기 들어온 경우도 포함 - runScanStep()이 scan_active를 false로 내리고
+                //  task_phase를 PHASE_APPROACH로 리셋한 뒤 다음 tick에 이 분기로 자연스럽게 넘어온다)
                 task_phase = PHASE_APPROACH;   // 복귀 완료 -> 접근 단계로 리셋 (임피던스 OFF)
 
                 std_msgs::Bool traj_done_msg;

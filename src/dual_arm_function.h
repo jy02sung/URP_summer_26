@@ -112,11 +112,13 @@ double target_torque[DoF] = {0, };
 ////////////////////////////////////////////////////////////////////////////////////////////
 //------------------------------------- Impedance Control ---------------------------------//
 ////////////////////////////////////////////////////////////////////////////////////////////
-// 작업 단계: 접근 / 파지~내려놓기 / 복귀. 파지~내려놓기 구간에서만 임피던스 활성화.
+// 작업 단계: 스캔 / 접근 / 파지~내려놓기 / 복귀. 파지~내려놓기 구간에서만 임피던스 활성화.
 // vision pick(command_mode==3) 실행 시 main.cpp가 세그먼트별로 dual_arm_phase_trajectory에
 // 태깅해서 재생 중 자동으로 전환한다. 그 외 모드(0/1/2) 또는 idle 상태에서는
 // /dual_arm/TaskPhase(std_msgs/Int32) 구독으로 수동 오버라이드 가능 (기본값: 접근, 임피던스 OFF).
-enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2 };
+// PHASE_SCAN(3)은 Head 자동 스캔 중에만 내부적으로 쓰이며 수동 오버라이드 대상이 아니다
+// (msgCallbackTaskPhase의 범위 체크가 PHASE_APPROACH~PHASE_RETURN까지만 허용).
+enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2, PHASE_SCAN = 3 };
 int task_phase = PHASE_APPROACH;
 
 // F/T 센서 측정값 (force.x,y,z), /dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor 콜백에서 갱신

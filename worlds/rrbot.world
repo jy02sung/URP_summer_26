@@ -12,12 +12,63 @@
       <uri>model://sun</uri>
     </include>
 
-    <!-- ArUco test marker for head_camera / aruco_ros detection testing -->
+    <!-- 테이블 두 개(pick_table/place_table) 완전 제거함. 반복적으로 팔이 테이블에 걸리는 문제 때문에
+         사용자 요청으로 삭제 - 실측 진단(물리엔진 접촉 모니터링)으로는 테이블 충돌 자체는 0건이었고
+         실제 원인은 ArUco 검출오차(~3cm) > 파지 스퀴즈 마진(0.5mm)이었지만, 테이블이라는 장애물 자체를
+         없애서 그 문제의 여파(물체가 테이블 밖으로 떨어짐)를 원천 차단하는 방향으로 처리함.
+         물체/마커 높이는 기존 테이블 상판 높이(z=1.15)를 그대로 유지 - main.cpp의 SAFE_Z=1.50,
+         파지 접근 좌표 등 기존에 이 높이 기준으로 다 캘리브레이션되어 있어서 그대로 재사용 가능.
+
+         aruco_box_26은 이제 model.sdf에서 static=false(동역학 물체)다. 받침이 전혀 없으면 스캔/접근
+         구간 동안 중력으로 바로 낙하하므로, pick 지점(고정 좌표) 바로 아래에만 작은 pick_pedestal을
+         둬서 파지 전까지만 떠받친다 - 예전 테이블처럼 팔 이동 경로 전체를 가로지르는 큰 판이 아니라
+         물체 발판 크기(0.12x0.12m)라 팔 충돌 재발 우려가 적다.
+         파지~내려놓기 구간은 main.cpp의 임피던스 제어(가상 스프링-댐퍼 + F/T 센서)가 양팔 스퀴즈
+         마찰(grasp_offset, mu=1.2)만으로 물체를 들어 옮긴다 - 더 이상 /gazebo/set_model_state로
+         pose를 강제 갱신하는 kinematic attach는 쓰지 않는다.
+         place 지점(transport_pt)은 실행마다 임의 좌표라 고정 받침대를 둘 수 없다 - 내려놓기 후 손을
+         벌리는 순간 그 자리에 받쳐줄 게 없으면 바닥(ground_plane)까지 낙하한다. 특정 위치에 고정해서
+         쓰게 되면 그때 pick_pedestal과 동일한 방식으로 place_pedestal을 추가하면 된다. -->
+
+    <!-- Graspable pick object: 10x10x10cm box with a 5cm ArUco id=26 marker facing the head
+         camera. dynamic(model.sdf) - held by real friction/impedance grasp, not kinematic attach. -->
     <include>
-      <uri>model://aruco_marker_26</uri>
-      <name>aruco_marker_26</name>
-      <!-- head_camera sits at ~(0.05, 0, 1.54) looking along +X at the zero pose (FK-verified) -->
-      <pose>0.35 0 1.54 0 0 0</pose>
+      <uri>model://aruco_box_26</uri>
+      <name>aruco_box_26</name>
+      <pose>0.45 -0.15 1.20 0 0 0</pose>
+    </include>
+
+    <!-- pick 지점 전용 소형 받침대: 물체 발판(10x10cm)보다 살짝 큰 12x12cm, 상판 z=1.15(기존 테이블
+         높이와 동일). 파지 전(LOCATE+APPROACH) 동안만 물체를 떠받치는 용도 - 팔은 물체 바로 위/옆으로만
+         접근하므로 이 작은 받침대와 충돌할 일이 없다. -->
+    <model name="pick_pedestal">
+      <static>true</static>
+      <pose>0.45 -0.15 1.10 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <box><size>0.12 0.12 0.10</size></box>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <box><size>0.12 0.12 0.10</size></box>
+          </geometry>
+          <material>
+            <ambient>0.4 0.4 0.4 1</ambient>
+            <diffuse>0.4 0.4 0.4 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- Transport target (id=27): flat marker decal marking where the object should be placed.
+         Not detected by aruco_detection.launch (that's fixed to id 26) - it's a visual landmark
+         for the manually-entered SCREEN_VISION_TARGET xyz. -->
+    <include>
+      <uri>model://aruco_marker_27</uri>
+      <name>aruco_marker_27</name>
+      <pose>0.45 0.4 1.1505 0 0 0</pose>
     </include>
 
     <!-- Focus camera on tall pendulum -->

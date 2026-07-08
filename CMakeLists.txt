@@ -10,13 +10,14 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
   tf
   geometry_msgs
+  gazebo_msgs
 )
 
 
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES dual_arm
- CATKIN_DEPENDS roscpp rospy std_msgs tf geometry_msgs
+ CATKIN_DEPENDS roscpp rospy std_msgs tf geometry_msgs gazebo_msgs
 )
 
 

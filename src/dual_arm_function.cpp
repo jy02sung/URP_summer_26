@@ -78,8 +78,8 @@ void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, Matrix
 	// 관절 인덱스 레이아웃: 0=waist,1=head_yaw,2=head_pitch,3~6=왼팔,7~10=오른팔
 	// 왼팔/오른팔 Tf를 각자의 최대 오차로 독립 계산 -> 변위가 작은 팔이 큰 팔의 Tf에 끌려가서
 	// 초반 속도가 지나치게 작아지는(=늦게 움직이는 것처럼 보이는) 문제를 제거한다.
-	// waist/head는 팔이 아니므로 둘 중 더 긴 Tf(Tf_max)에 맞춘다.
-	double max_error_left = 0, max_error_right = 0;
+	// waist/head는 팔이 아니므로 셋 중 가장 긴 Tf(Tf_max)에 맞춘다.
+	double max_error_left = 0, max_error_right = 0, max_error_wh = 0;
 	for (int i = 3; i <= 6; i++) {
 		double error = fabs(q_cmd[i] - q_ini[i]);
 		if (max_error_left < error) max_error_left = error;
@@ -88,10 +88,18 @@ void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, Matrix
 		double error = fabs(q_cmd[i] - q_ini[i]);
 		if (max_error_right < error) max_error_right = error;
 	}
+	// waist/head(0~2) 자체의 변위도 Tf 계산에 반영한다. 이게 빠지면 팔이 하나도 안 움직이는
+	// head-only 명령에서 Tf_max=0 -> no_motion 처리되어 head/waist 궤적이 통째로 무시되는
+	// 버그가 있었다 (Head 자동 스캔 진단 중 실측으로 확인: head_pitch 단독 명령이 전혀 반영되지 않음).
+	for (int i = 0; i <= 2; i++) {
+		double error = fabs(q_cmd[i] - q_ini[i]);
+		if (max_error_wh < error) max_error_wh = error;
+	}
 
 	double Tf_left  = max_error_left  / q_dot_des;
 	double Tf_right = max_error_right / q_dot_des;
-	double Tf_max   = std::max(Tf_left, Tf_right);   // waist/head는 더 긴 쪽 Tf에 맞춤
+	double Tf_wh    = max_error_wh    / q_dot_des;
+	double Tf_max   = std::max({Tf_left, Tf_right, Tf_wh});   // waist/head는 셋 중 가장 긴 Tf에 맞춤
 
 	// 관절별 Tf 배열 (재생은 전부 t=0에서 동시에 시작, 각자 자신의 Tf에 도달하면 그 자리에서 정지 유지)
 	double Tf[DoF];

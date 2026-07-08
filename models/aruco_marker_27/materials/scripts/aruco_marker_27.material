@@ -1,0 +1,15 @@
+material Aruco/Marker27
+{
+  technique
+  {
+    pass
+    {
+      lighting off
+      texture_unit
+      {
+        texture marker27_5cm.jpg
+        filtering none
+      }
+    }
+  }
+}
