@@ -121,7 +121,7 @@ Head가 자동으로 스캔 자세(yaw=0, pitch=+0.5236rad)로 이동해 마커�
 | 2b | 리프트 → 이송목표 | GRASP_TO_PLACE | 리프트 높이에서 이송목표로 직선 이동 (목표 z가 다르면 대각선 하강 포함) |
 | 3 | 이송목표 → 원위치 | RETURN | 내려놓기 후 복귀, 임피던스 OFF |
 
-물체는 양팔이 `grasp_offset=0.045m`로 박스 표면(half-width 0.05m) 안쪽 5mm를 스퀴즈한 채로 세그먼트 2~2b 내내 임피던스 제어를 유지하는 것만으로 붙잡힌다 — kinematic attach(강제 pose 갱신)는 쓰지 않는다.
+물체는 양팔이 `grasp_offset=0.040m`로 박스 표면(half-width 0.05m) 안쪽 10mm를 스퀴즈한 채로 세그먼트 2~2b 내내 임피던스 제어를 유지하는 것만으로 붙잡힌다 — kinematic attach(강제 pose 갱신)는 쓰지 않는다.
 
 ---
 
@@ -187,7 +187,8 @@ target_torque = pinocchio::rnea(q, qdot, qddot_cmd)   // 관성 + 코리올리 +
 ```
 Md·e_ddot + Bd·e_dot + Kd_imp·e = F_ext     (e = x_actual - x_desired, world frame 위치 3축)
 
-F_ext: F/T 센서 (/dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor)
+F_ext: F/T 센서 (/dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor), 10Hz 로우패스 필터 통과 후 사용
+       (원시값은 접촉 순간 노이즈가 커서 필터 없이 쓰면 그대로 토크에 증폭되어 접촉이 떨림)
 e_ddot → DampedPinv(J, λ=0.05)로 관절가속도 변환 → qddot_cmd에 additive
 ```
 
@@ -244,7 +245,7 @@ Kd = { 50,   30,  30,  1,   1,   1,   1,   1,   1,   1,   1   }
 // 순서: Waist, Head_yaw, Head_pitch, L팔4개, R팔4개
 
 // 임피던스 파라미터 (좌/우 동일, 위치 3축 공통)
-Md = 2.0kg, Bd = 50.0 N·s/m, Kd_imp = 300.0 N/m
+Md = 2.0kg, Bd = 65.0 N·s/m, Kd_imp = 500.0 N/m
 IMPEDANCE_DLS_LAMBDA = 0.05   // 임피던스 가속도 -> 관절가속도 변환용 댐핑 계수
 ```
 
