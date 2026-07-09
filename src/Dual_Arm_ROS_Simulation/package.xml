@@ -22,5 +22,7 @@
 <exec_depend>rospy</exec_depend>
 <exec_depend>std_msgs</exec_depend>
 <exec_depend>gazebo_ros</exec_depend>
-<export> </export>
+<export> 
+    <gazebo_ros gazebo_model_path="${prefix}/models"/>
+</export>
 </package>
