@@ -344,7 +344,8 @@ int main(int argc, char **argv)
 
         // 양팔 동시 파지 간격(물체를 y축 양쪽에서 감싸는 형태)
         // aruco_box_26 기준: 10cm 정육면체, y방향 half-width = 0.05m
-        const double grasp_offset = 0.045;  // 물체/이송목표 좌우 간격 (표면 안쪽 5mm 압착)
+        const double grasp_offset = 0.040;  // 물체/이송목표 좌우 간격 (표면 안쪽 10mm 압착 - 기존 5mm는 정적 유지 여유만 있고
+                                             // 이송 중 관성부하를 버틸 마진이 없어 슬립 발생, Kd_imp 상향과 함께 조임)
 
         VectorXd base_seed(DoF);
         for (int i = 0; i < DoF; i++) base_seed(i) = base_q[i];
@@ -813,9 +814,18 @@ int main(int argc, char **argv)
             Vector3d eL_dot = xL_dot_actual - xL_d_dot;
             Vector3d eR_dot = xR_dot_actual - xR_d_dot;
 
+            // F/T 원시값은 접촉 순간 노이즈가 커서(수십 N 단위로 수 ms만에 요동) 그대로 쓰면 임피던스
+            // 가속도(eL_ddot)에 그대로 증폭 반영되어 스퀴즈 접촉이 떨린다(chatter) - 로우패스로 완화.
+            for (int k = 0; k < 3; k++) {
+                left_ft_force_lpf(k)  = dualarm.LowPassFilter(left_ft_force(k),  left_ft_force_before(k),  FT_LPF_CUTOFF_HZ);
+                right_ft_force_lpf(k) = dualarm.LowPassFilter(right_ft_force(k), right_ft_force_before(k), FT_LPF_CUTOFF_HZ);
+            }
+            left_ft_force_before  = left_ft_force_lpf;
+            right_ft_force_before = right_ft_force_lpf;
+
             // F/T 센서 힘: 센서가 EE 프레임과 동일 방향으로 장착되었다고 가정하고 world frame으로 변환
-            Vector3d F_ext_L = RL_actual * left_ft_force;
-            Vector3d F_ext_R = RR_actual * right_ft_force;
+            Vector3d F_ext_L = RL_actual * left_ft_force_lpf;
+            Vector3d F_ext_R = RR_actual * right_ft_force_lpf;
 
             Vector3d eL_ddot, eR_ddot;
             for (int k = 0; k < 3; k++) {
@@ -915,13 +925,13 @@ int main(int argc, char **argv)
         // cout << dual_arm_jointp[4]*rad2deg << "   " << dual_arm_jointp[8]*rad2deg << endl;
         
 
-        cout << "=== Left End-Effector Pose ===" << endl;
-        cout << "Position: " << data.oMf[l_EE].translation().transpose() << endl;
-        cout << "Orientation (Rotation Matrix):\n" << data.oMf[l_EE].rotation() << endl;
+        //cout << "=== Left End-Effector Pose ===" << endl;
+        //cout << "Position: " << data.oMf[l_EE].translation().transpose() << endl;
+        //cout << "Orientation (Rotation Matrix):\n" << data.oMf[l_EE].rotation() << endl;
         
-        cout << "=== Right End-Effector Pose ===" << endl;
-        cout << "Position: " << data.oMf[r_EE].translation().transpose() << endl;
-        cout << "Orientation (Rotation Matrix):\n" << data.oMf[r_EE].rotation() << endl;     
+        //cout << "=== Right End-Effector Pose ===" << endl;
+        //cout << "Position: " << data.oMf[r_EE].translation().transpose() << endl;
+        //cout << "Orientation (Rotation Matrix):\n" << data.oMf[r_EE].rotation() << endl;     
 
         loop_rate.sleep();
         ros::spinOnce();

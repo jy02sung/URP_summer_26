@@ -125,14 +125,21 @@ int task_phase = PHASE_APPROACH;
 Vector3d left_ft_force  = Vector3d::Zero();
 Vector3d right_ft_force = Vector3d::Zero();
 
+// F/T 로우패스 필터 상태 (임피던스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp 임피던스 블록에서 갱신)
+Vector3d left_ft_force_lpf     = Vector3d::Zero();
+Vector3d right_ft_force_lpf    = Vector3d::Zero();
+Vector3d left_ft_force_before  = Vector3d::Zero();
+Vector3d right_ft_force_before = Vector3d::Zero();
+const double FT_LPF_CUTOFF_HZ  = 10.0;  // 컷오프 주파수 [Hz]
+
 // 가상 스프링-댐퍼-질량 파라미터 (튜닝용): Md*e_ddot + Bd*e_dot + Kd*e = F_ext,  e = x_actual - x_desired
 double Md_left[3]      = { 2.0, 2.0, 2.0 };      // 가상 질량 [kg]
-double Bd_left[3]      = { 50.0, 50.0, 50.0 };   // 가상 댐핑 [N·s/m]
-double Kd_imp_left[3]  = { 300.0, 300.0, 300.0 };// 가상 강성 [N/m]
+double Bd_left[3]      = { 65.0, 65.0, 65.0 };   // 가상 댐핑 [N·s/m] (Kd_imp 상향에 맞춰 임계감쇠 근처로 재조정)
+double Kd_imp_left[3]  = { 500.0, 500.0, 500.0 };// 가상 강성 [N/m] (기존 300 -> 관성부하 마진 확보 위해 상향)
 
 double Md_right[3]     = { 2.0, 2.0, 2.0 };
-double Bd_right[3]     = { 50.0, 50.0, 50.0 };
-double Kd_imp_right[3] = { 300.0, 300.0, 300.0 };
+double Bd_right[3]     = { 65.0, 65.0, 65.0 };
+double Kd_imp_right[3] = { 500.0, 500.0, 500.0 };
 
 const double IMPEDANCE_DLS_LAMBDA = 0.05;  // Cartesian 가속도 -> 관절 가속도 변환용 댐핑 의사역행렬 계수
 
