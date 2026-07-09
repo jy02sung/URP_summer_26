@@ -383,6 +383,35 @@
           filename="package://dual_arm/meshes/L_EE.STL" />
       </geometry>
     </collision>
+    <!-- 파지 안정성 보강용 평면 접촉 패드. L_EE.STL은 실측(메시 직접 파싱) 결과 약 6.5x6.5x5.4cm의
+         거의 구형(반경 ~3.25cm)이라 박스 평면과 사실상 점 접촉만 생겨 이송 중 자세가 흔들리기 쉽다.
+         pinocchio FK/IK로 pick 지점(0.45,-0.15,1.20, grasp_offset=0.043) 파지 자세를 직접 풀어보니
+         L_EE 로컬 Y축이 스퀴즈 방향(월드 Y축)의 지배적인 축이라(dot~0.77), 로컬 -Y쪽에 얇은 평면
+         패드를 추가해 둥근 mesh 대신 이 패드가 먼저(mesh 표면보다 1cm 더 튀어나오게) 닿아
+         평면-평면 접촉을 만들도록 한다. 손 마찰(mu=1.2)은 링크 레벨에 지정돼 있어 이 패드에도
+         그대로 적용된다. -->
+    <collision name="L_EE_grip_pad_collision">
+      <origin
+        xyz="0 -0.0375 -0.005"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.04 0.01 0.04" />
+      </geometry>
+    </collision>
+    <!-- L자형 턱(lip): 패드는 마찰(μN)에만 의존하므로 접촉 예산 자체는 늘려주지 않는다. 물체
+         아래 모서리를 기하학적으로 받칠 수 있도록 패드 아래쪽에 1cm 턱을 추가한다.
+         로컬축 매핑(위 pick 자세 FK 실측): 로컬 +X가 월드 +Z(수직, dot~0.97)와 거의 나란하고
+         로컬 Y가 스퀴즈 방향이다 - 그래서 "아래"는 로컬 -X, "물체 쪽으로 더 뻗기"는 로컬 -Y다.
+         패드 바닥(로컬 x=-0.02) 바로 아래, 패드 바깥면(로컬 y=-0.0425)보다 1cm 더 뻗어나가게
+         배치해서 물체가 미끄러져 내려오면 이 턱에 걸리도록 한다. -->
+    <collision name="L_EE_grip_lip_collision">
+      <origin
+        xyz="-0.025 -0.0475 -0.005"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.01 0.01 0.04" />
+      </geometry>
+    </collision>
   </link>
   <joint
     name="L_EE_joint"
@@ -678,6 +707,28 @@
           filename="package://dual_arm/meshes/R_EE.STL" />
       </geometry>
     </collision>
+    <!-- 파지 안정성 보강용 평면 접촉 패드 (L_EE 쪽 설명 참고, mesh 반경 ~3.25cm). R_EE 로컬 Y축은
+         FK/IK 실측상 스퀴즈 방향(월드 Y축)과 거의 완벽히 정렬돼(dot~0.99) L_EE보다 정렬이 더
+         좋다. 로컬 +Y쪽에 배치, mesh 표면보다 1cm 더 튀어나오게 해서 이 패드가 먼저 닿는다. -->
+    <collision name="R_EE_grip_pad_collision">
+      <origin
+        xyz="0 0.0375 -0.005"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.04 0.01 0.04" />
+      </geometry>
+    </collision>
+    <!-- L자형 턱(lip) - L_EE 쪽 설명/축 매핑 참고 (R도 로컬 +X가 월드 +Z와 dot~0.97로 거의
+         나란함). 패드 바닥(로컬 x=-0.02) 아래, 패드 바깥면(로컬 y=0.0425)보다 1cm 더 뻗어나가게
+         배치. -->
+    <collision name="R_EE_grip_lip_collision">
+      <origin
+        xyz="-0.025 0.0475 -0.005"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.01 0.01 0.04" />
+      </geometry>
+    </collision>
   </link>
   <joint
     name="R_EE_joint"
@@ -861,6 +912,37 @@
         <robotNamespace>/dual_arm</robotNamespace>
       </plugin>
     </sensor>
+  </gazebo>
+
+  <!-- L_EE_joint/R_EE_joint는 fixed 조인트라 URDF->SDF 변환 시 부모 링크(L_elbow/R_elbow)로
+       lumping(축약)될 수 있다. lumping되면 조인트 자체가 사라져서 force_torque 피드백을 못 얻으므로
+       명시적으로 lumping을 막고 조인트 피드백 계산을 켠다. -->
+  <gazebo reference="L_EE_joint">
+    <disableFixedJointLumping>true</disableFixedJointLumping>
+    <provideFeedback>true</provideFeedback>
+  </gazebo>
+
+  <gazebo reference="R_EE_joint">
+    <disableFixedJointLumping>true</disableFixedJointLumping>
+    <provideFeedback>true</provideFeedback>
+  </gazebo>
+
+  <!-- gazebo_ros_ft_sensor: L_EE_joint/R_EE_joint에 걸리는 반력을 각각
+       /dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor (geometry_msgs/WrenchStamped)로 발행. -->
+  <gazebo>
+    <plugin name="l_ee_ft_sensor" filename="libgazebo_ros_ft_sensor.so">
+      <updateRate>100.0</updateRate>
+      <topicName>/dual_arm/left_ft_sensor</topicName>
+      <jointName>L_EE_joint</jointName>
+    </plugin>
+  </gazebo>
+
+  <gazebo>
+    <plugin name="r_ee_ft_sensor" filename="libgazebo_ros_ft_sensor.so">
+      <updateRate>100.0</updateRate>
+      <topicName>/dual_arm/right_ft_sensor</topicName>
+      <jointName>R_EE_joint</jointName>
+    </plugin>
   </gazebo>
 
   <link
