@@ -16,6 +16,8 @@ ArUco 마커 인식 → 양팔 동시 파지 → 임피던스 제어로 실제 �
 - ✅ 임피던스 제어로 실물리 스퀴즈 파지 (파지~내려놓기, kinematic attach 아님)
 - ✅ TaskPhase 자동 전환
 - ✅ standoff/lift 웨이포인트로 받침대 충돌 회피
+- ✅ 그립 패드 + L자형 턱으로 점접촉 문제 보강
+- ✅ F/T 로우패스 필터 + 스퀴즈 힘 마진 상향으로 이송 중 파지 슬립 방지
 
 ---
 
@@ -104,10 +106,12 @@ rosrun dual_arm dual_arm_command
 ```
 vision       ← vision 모드 선택
 0            ← 이송 목표 좌표 입력 선택
-0.45 0.4 1.20  ← 이송 목표 [x y z] (world frame, meter)
+0.45 0.15 1.2  ← 이송 목표 [x y z] (world frame, meter) - 슬립 없이 파지~이송 성공 확인된 좌표
 ```
 
 Head가 자동으로 스캔 자세(yaw=0, pitch=+0.5236rad)로 이동해 마커를 찾고, 연속 3프레임 일치로 검출을 확정한 뒤 아래 파이프라인이 자동 실행된다.
+
+위 좌표(`0.45 0.15 1.2`)로 실제 gazebo 재현 테스트 결과: 리프트 최고 높이 1.302m(목표 1.30m 달성), 그립 중 최저 높이 1.19994m(슬립 사실상 0), 최종적으로 이송 목표 근접 위치에 정지 상태(twist=0)로 안착 확인됨.
 
 ---
 
@@ -193,8 +197,18 @@ e_ddot → DampedPinv(J, λ=0.05)로 관절가속도 변환 → qddot_cmd에 add
 ```
 
 - 양팔이 `grasp_offset` 만큼 물체 표면 안쪽을 파고드는 목표 위치를 계속 추종하려 하고, 실제 접촉이 막아서 생기는 위치오차(e)에 `Kd_imp`가 곱해진 만큼이 곧 스퀴즈력이 되어 마찰(mu=1.2)로 물체를 붙잡는다. **박스 pose를 강제로 갱신하는 kinematic attach는 더 이상 쓰지 않는다.**
+- 관성부하(이송 중 가속/감속)까지 버틸 마진을 위해 `grasp_offset`을 표면 안쪽 10mm 침투로 조이고 `Kd_imp`를 상향했다 (아래 게인 설정 참고). 정적 유지분만 계산했던 이전 값(5mm/`Kd_imp=300`)으로는 이송 중 슬립이 발생했었다.
 
-### 7. TaskPhase 자동 전환
+### 7. 그립 패드 + L자형 턱 (`urdf/dual_arm.xacro`)
+
+손 mesh(`L_EE.STL`/`R_EE.STL`)가 실측 결과 약 6.5x6.5x5.4cm의 거의 구형(반경 ~3.25cm)이라, 그대로 두면 박스 평면과 점접촉만 생겨 스퀴즈해도 자세가 흔들리기 쉽다. pinocchio FK/IK로 pick 자세를 직접 풀어 손의 로컬 축이 월드 스퀴즈 방향과 정렬되는 축을 확인한 뒤:
+
+- **평면 패드** (4x1x4cm box): mesh 표면보다 1cm 더 튀어나오게 스퀴즈 방향 로컬면에 부착 — 둥근 mesh 대신 이 패드가 먼저 닿아 평면-평면 접촉을 만든다. 손 마찰(mu=1.2)이 패드에도 그대로 적용됨.
+- **L자형 턱** (1cm lip): 패드 아래쪽에 추가 — 마찰(μN)만으론 접촉 예산 자체가 늘지 않으므로, 물체 아래 모서리를 기하학적으로도 받쳐 미끄러져 내려오면 걸리도록 함.
+
+좌우 손이 대칭 구조가 아니라서(L_EE 로컬 Y축 dot~0.77 vs R_EE 로컬 X축 dot~0.97) 좌우 패드/턱의 로컬 좌표 배치도 서로 다르다 — 특정 pick 위치(0.45, -0.15)에서 실측한 손 자세 기준이라 pick 위치가 바뀌면 재검증 필요.
+
+### 8. TaskPhase 자동 전환
 
 ```
 PHASE_APPROACH (0)       → 접근 구간, 임피던스 OFF
@@ -203,9 +217,11 @@ PHASE_RETURN (2)         → 복귀, 임피던스 OFF
 PHASE_SCAN (3)           → Head 스캔 구간 (수동 오버라이드 대상 아님)
 ```
 
-### 8. 받침대 (pick_pedestal)
+### 9. 받침대 & 이송목표 표시 (pick_pedestal / place_indicator)
 
 `aruco_box_26`은 동역학(dynamic) 물체라 받침이 없으면 자유낙하한다. pick 지점(고정 좌표) 바로 아래에만 물체 발판 크기의 작은 정적 받침대(`pick_pedestal`, 12x12x10cm, 상판 z=1.15)를 둬서 파지 전까지만 지지한다 — 예전에 팔 충돌 문제로 제거했던 전체 테이블과 달리 팔 이동 경로 전체를 가로지르지 않는다. place 지점은 실행마다 임의 좌표라 별도 받침대가 없다 — 내려놓은 뒤 받쳐줄 게 없으면 바닥까지 낙하한다 (place 지점을 고정해서 쓰게 되면 동일한 방식으로 추가 필요).
+
+vision pick 명령이 들어올 때마다, 입력한 이송 목표 좌표에 `place_indicator`(초록 받침대 + 보라 구, `main.cpp`에 인라인 SDF로 정의)를 새로 스폰해 목표 지점을 시각적으로 표시한다. 매번 같은 이름으로 스폰하므로 재사용 전에 항상 delete부터 시도한다.
 
 ---
 
@@ -222,8 +238,10 @@ Dual_Arm_ROS_Simulation/
 │   ├── dual_arm.urdf         # 11DoF URDF (Head 2DoF 포함)
 │   └── dual_arm.xacro
 ├── launch/
-│   ├── gazebo.launch
-│   └── aruco_detection.launch
+│   ├── gazebo.launch          # world + 로봇 스폰 + effort controller + dual_arm_main
+│   ├── dual_arm_control.launch # gazebo.launch에서 include: controller_spawner + robot_state_publisher
+│   ├── aruco_detection.launch
+│   └── rviz.launch
 ├── config/
 │   ├── dual_arm_effortcontrol.yaml
 │   └── dual_arm_positioncontrol.yaml
@@ -255,4 +273,6 @@ IMPEDANCE_DLS_LAMBDA = 0.05   // 임피던스 가속도 -> 관절가속도 변�
 
 - 자세한 설계 배경/기능 현황: `PRD.md`
 - kinematic attach 제거 및 받침대/standoff/lift 도입 과정 상세: `IMPEDANCE_GRASP.md`
+- 세션별 시도/원인분석 타임라인(F/T 슬립 분석 포함), 커밋 히스토리 정리: `발표용.md`
+- 알려진 한계(팔꿈치 방향, IK orientation 미제어 등): `발표용.md` 7번 항목
 - Gazebo 종료: `killall -9 gzclient gzserver roslaunch rosmaster`
