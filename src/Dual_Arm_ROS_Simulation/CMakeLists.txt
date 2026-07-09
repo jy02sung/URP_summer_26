@@ -9,6 +9,8 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   message_generation
   roslib
+  gazebo_msgs
+  tf
 )
 
 

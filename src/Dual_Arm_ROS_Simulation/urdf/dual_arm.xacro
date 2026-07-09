@@ -908,6 +908,48 @@
     </sensor>
   </gazebo>
 
+  <gazebo reference="L_EE">
+    <mu1>100.0</mu1>
+    <mu2>100.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.003</minDepth>
+    <maxVel>0.0</maxVel>
+
+    <sensor name="left_contact_sensor" type="contact">
+      <always_on>true</always_on>
+      <update_rate>50.0</update_rate>
+      <contact>
+        <collision>L_EE_collision</collision>
+      </contact>
+      <plugin name="left_bumper" filename="libgazebo_ros_bumper.so">
+        <bumperTopicName>/dual_arm/left_force</bumperTopicName>
+        <frameName>L_EE</frameName>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="R_EE">
+    <mu1>100.0</mu1>
+    <mu2>100.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.003</minDepth>
+    <maxVel>0.0</maxVel>
+
+    <sensor name="right_contact_sensor" type="contact">
+      <always_on>true</always_on>
+      <update_rate>50.0</update_rate>
+      <contact>
+        <collision>R_EE_collision</collision>
+      </contact>
+      <plugin name="right_bumper" filename="libgazebo_ros_bumper.so">
+        <bumperTopicName>/dual_arm/right_force</bumperTopicName>
+        <frameName>R_EE</frameName>
+      </plugin>
+    </sensor>
+  </gazebo>
+
   <gazebo>
     <plugin name="gazebo_ros_control" filename="libgazebo_ros_control.so">
       <robotNamespace>/dual_arm</robotNamespace>
