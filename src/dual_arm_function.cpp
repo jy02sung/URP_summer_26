@@ -250,10 +250,9 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
 // 좌우 동일한 시간 Tf를 쓰되, 더 긴 이동거리를 기준으로 Tf를 잡는다.
 void DualArmControl::CartesianLineTrajectory(const Vector3d& startL, const Vector3d& goalL,
                                              const Vector3d& startR, const Vector3d& goalR,
-                                             MatrixXd& pos_out, MatrixXd& vel_out, MatrixXd& acc_out)
+                                             MatrixXd& pos_out, MatrixXd& vel_out, MatrixXd& acc_out,
+                                             double v_des)
 {
-    double v_des = 0.1;
-
     Vector3d vecL = goalL - startL;
     Vector3d vecR = goalR - startR;
     double distL = vecL.norm();

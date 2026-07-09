@@ -178,7 +178,8 @@ class DualArmControl
         // 좌우 각각 x,y,z 경로를 만든다.
         void CartesianLineTrajectory(const Vector3d& startL, const Vector3d& goalL,
                              const Vector3d& startR, const Vector3d& goalR,
-                             MatrixXd& pos_out, MatrixXd& vel_out, MatrixXd& acc_out);
+                             MatrixXd& pos_out, MatrixXd& vel_out, MatrixXd& acc_out,
+                             double v_des = 0.1);
 
         // === 추가: 댐핑 의사역행렬 (mode 2에서 J -> J+ 변환용) ===
         MatrixXd DampedPinv(const MatrixXd& J, double lambda);     

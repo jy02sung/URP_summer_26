@@ -386,9 +386,10 @@ int main(int argc, char **argv)
         // CartesianLineTrajectory로 6D(L+R) 직선 경로를 만들고, 매 웨이포인트마다 DLS IK를 풀어
         // 관절각 시퀀스로 변환한 뒤, 위치->속도->가속도를 중심차분으로 계산한다 (mode 2 cartesian sim과 동일 방식).
         auto addCartesianSegment = [&](const Vector3d& sL, const Vector3d& gL,
-                                        const Vector3d& sR, const Vector3d& gR, int phase) {
+                                        const Vector3d& sR, const Vector3d& gR, int phase,
+                                        double v_des = 0.1) {
             MatrixXd cart_p, cart_v, cart_a;
-            dualarm.CartesianLineTrajectory(sL, gL, sR, gR, cart_p, cart_v, cart_a);
+            dualarm.CartesianLineTrajectory(sL, gL, sR, gR, cart_p, cart_v, cart_a, v_des);
             int steps = cart_p.rows();
 
             MatrixXd jp(steps, DoF), jv(steps, DoF), ja(steps, DoF);
@@ -432,7 +433,11 @@ int main(int argc, char **argv)
         addCartesianSegment(start_L, standoffL, start_R, standoffR, PHASE_APPROACH);
 
         // 1b) standoff -> 파지 위치로 y 방향 직선 접근 (파지 높이를 그대로 유지하므로 받침대와 부딪히지 않음)
-        addCartesianSegment(standoffL, objL, standoffR, objR, PHASE_APPROACH);
+        // objL/R은 이미 박스 표면 안쪽(grasp_offset 침투)까지를 목표로 하므로, 기본 속도(0.1m/s)로
+        // 그대로 들어가면 접촉 순간 충격이 커서 좌우 접촉이 어긋나며 물체가 회전하며 떨어지는 문제가
+        // 있었다 - 이 구간만 더 느리게(v_des=0.03m/s) 접근해 접촉 충격을 줄인다.
+        const double APPROACH_CONTACT_V_DES = 0.03;
+        addCartesianSegment(standoffL, objL, standoffR, objR, PHASE_APPROACH, APPROACH_CONTACT_V_DES);
 
         // 2) 파지 위치에서 수직으로 들어올리기. 이 구간부터 PHASE_GRASP_TO_PLACE로 태깅되어 임피던스
         //    제어가 켜지고, 양팔 스퀴즈(grasp_offset) 마찰로 물체를 실제로 붙잡아 든다.
