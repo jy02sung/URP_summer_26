@@ -15,7 +15,7 @@ double DualArmControl::LowPassFilter(double &input, double &output_before, doubl
 // -----------------------------------Trajectory Planning----------------------------------//
 void DualArmControl::JointTrajectoryTrapezoidal(double* q_ini, double* q_cmd, MatrixXd& q_out, MatrixXd& q_dot_out)
 {
-	double q_dot_des = 1.2; //rad/s
+	double q_dot_des = 0.6; //rad/s
 	double q_double_dot_des = 1; //rad/s^2
 
 	double max_q_error = 0;
@@ -104,7 +104,7 @@ void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, Matrix
 // 3차원 공간상의 직선 경로를 생성하는 함수 (Quintic 활용)
 void DualArmControl::CartesianTrajectoryQuintic(const Vector3d& p_ini, const Vector3d& p_cmd, MatrixXd& p_out, MatrixXd& p_dot_out, MatrixXd& p_acc_out)
 {
-    double v_des = 0.06; // 손끝 속도 (m/s)
+    double v_des = 0.15; // 손끝 속도 (m/s)
 
     double distance = (p_cmd - p_ini).norm();
     double Tf = distance / v_des;
@@ -201,49 +201,6 @@ bool DualArmControl::SolveIK_DLS(pinocchio::Model& model, pinocchio::Data& data,
         q = pinocchio::integrate(model, q, dq * dt);
     }
     
-    q_inout = q;
-    return success;
-}
-
-bool DualArmControl::SolvePositionIK_DLS(pinocchio::Model& model, pinocchio::Data& data, const pinocchio::FrameIndex frame_id, const Eigen::Vector3d& target_position, const std::vector<int>& active_indices, Eigen::VectorXd& q_inout)
-{
-    const int max_iter = 150;
-    const double eps = 2e-3;
-    const double lambda = 0.03;
-    const double dt = 0.6;
-
-    Eigen::VectorXd q = q_inout;
-    Eigen::MatrixXd J_full(6, model.nv);
-    Eigen::MatrixXd J_pos(3, active_indices.size());
-    bool success = false;
-
-    for (int it = 0; it < max_iter; ++it) {
-        pinocchio::forwardKinematics(model, data, q);
-        pinocchio::updateFramePlacements(model, data);
-
-        Eigen::Vector3d err = target_position - data.oMf[frame_id].translation();
-        if (err.norm() < eps) {
-            success = true;
-            break;
-        }
-
-        J_full.setZero();
-        pinocchio::computeFrameJacobian(model, data, q, frame_id, pinocchio::LOCAL_WORLD_ALIGNED, J_full);
-        for (size_t col = 0; col < active_indices.size(); ++col) {
-            J_pos.col(col) = J_full.topRows(3).col(active_indices[col]);
-        }
-
-        Eigen::Matrix3d damping = lambda * lambda * Eigen::Matrix3d::Identity();
-        Eigen::VectorXd dq_active = J_pos.transpose() * (J_pos * J_pos.transpose() + damping).inverse() * err;
-
-        Eigen::VectorXd dq = Eigen::VectorXd::Zero(model.nv);
-        for (size_t i = 0; i < active_indices.size(); ++i) {
-            dq(active_indices[i]) = dq_active(i);
-        }
-
-        q = pinocchio::integrate(model, q, dq * dt);
-    }
-
     q_inout = q;
     return success;
 }

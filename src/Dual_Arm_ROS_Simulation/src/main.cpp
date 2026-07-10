@@ -8,10 +8,24 @@
 bool left_contact = false;
 bool right_contact = false;
 bool do_aruco_pick = false;
+bool joint_state_received = false;
+bool home_pose_initialized = false;
 int pick_step = 0; 
 double current_squeeze_L = 0.10;
 double current_squeeze_R = -0.10;
 double head_start_angle = 0.0;
+double grasp_target_x = 0.40;
+double grasp_target_z = 0.80;
+double home_jointp[DoF] = {0,};
+double sequence_hold_jointp[DoF] = {0,};
+const double head_down_angle = 40.0 * M_PI / 180.0;
+const double min_grip_half_width = -0.03;
+const double marker_to_cube_center_x_offset = 0.13;
+const double marker_to_cube_center_z_offset = 0.21;
+int ctrl_to_pin[DoF] = {0,};
+int pin_to_ctrl[DoF] = {0,};
+std::vector<int> left_arm_active_indices;
+std::vector<int> right_arm_active_indices;
 
 geometry_msgs::PoseStamped latest_aruco_pose_cam; // 카메라 기준 좌표
 bool aruco_detected = false; // 마커 감지 플래그
@@ -42,41 +56,49 @@ void msgCallbackArucoPick(const std_msgs::Empty::ConstPtr& msg) {
 // 알파벳 순서가 바뀌어도 안전하도록 이름으로 매칭하는 통합 콜백 함수
 void msgCallbackJointState(const sensor_msgs::JointState::ConstPtr& msg)
 {
+    auto safeAt = [](const std::vector<double>& values, size_t idx) {
+        if (idx >= values.size() || !std::isfinite(values[idx])) {
+            return 0.0;
+        }
+        return values[idx];
+    };
+
     for (size_t i = 0; i < msg->name.size(); i++) {
         if (msg->name[i] == "Waist_joint") {
-            waist_jointp[0] = msg->position[i]; waist_jointv[0] = msg->velocity[i]; waist_torque[0] = msg->effort[i];
+            waist_jointp[0] = safeAt(msg->position, i); waist_jointv[0] = safeAt(msg->velocity, i); waist_torque[0] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "L_shoulder_pitch_joint") {
-            left_arm_jointp[0] = msg->position[i]; left_arm_jointv[0] = msg->velocity[i]; left_arm_torque[0] = msg->effort[i];
+            left_arm_jointp[0] = safeAt(msg->position, i); left_arm_jointv[0] = safeAt(msg->velocity, i); left_arm_torque[0] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "L_shoulder_roll_joint") {
-            left_arm_jointp[1] = msg->position[i]; left_arm_jointv[1] = msg->velocity[i]; left_arm_torque[1] = msg->effort[i];
+            left_arm_jointp[1] = safeAt(msg->position, i); left_arm_jointv[1] = safeAt(msg->velocity, i); left_arm_torque[1] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "L_shoulder_yaw_joint") {
-            left_arm_jointp[2] = msg->position[i]; left_arm_jointv[2] = msg->velocity[i]; left_arm_torque[2] = msg->effort[i];
+            left_arm_jointp[2] = safeAt(msg->position, i); left_arm_jointv[2] = safeAt(msg->velocity, i); left_arm_torque[2] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "L_elbow_joint") {
-            left_arm_jointp[3] = msg->position[i]; left_arm_jointv[3] = msg->velocity[i]; left_arm_torque[3] = msg->effort[i];
+            left_arm_jointp[3] = safeAt(msg->position, i); left_arm_jointv[3] = safeAt(msg->velocity, i); left_arm_torque[3] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "R_shoulder_pitch_joint") {
-            right_arm_jointp[0] = msg->position[i]; right_arm_jointv[0] = msg->velocity[i]; right_arm_torque[0] = msg->effort[i];
+            right_arm_jointp[0] = safeAt(msg->position, i); right_arm_jointv[0] = safeAt(msg->velocity, i); right_arm_torque[0] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "R_shoulder_roll_joint") {
-            right_arm_jointp[1] = msg->position[i]; right_arm_jointv[1] = msg->velocity[i]; right_arm_torque[1] = msg->effort[i];
+            right_arm_jointp[1] = safeAt(msg->position, i); right_arm_jointv[1] = safeAt(msg->velocity, i); right_arm_torque[1] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "R_shoulder_yaw_joint") {
-            right_arm_jointp[2] = msg->position[i]; right_arm_jointv[2] = msg->velocity[i]; right_arm_torque[2] = msg->effort[i];
+            right_arm_jointp[2] = safeAt(msg->position, i); right_arm_jointv[2] = safeAt(msg->velocity, i); right_arm_torque[2] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "R_elbow_joint") {
-            right_arm_jointp[3] = msg->position[i]; right_arm_jointv[3] = msg->velocity[i]; right_arm_torque[3] = msg->effort[i];
+            right_arm_jointp[3] = safeAt(msg->position, i); right_arm_jointv[3] = safeAt(msg->velocity, i); right_arm_torque[3] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "Head_yaw_joint") {
-            head_jointp[0] = msg->position[i]; head_jointv[0] = msg->velocity[i]; head_torque[0] = msg->effort[i];
+            head_jointp[0] = safeAt(msg->position, i); head_jointv[0] = safeAt(msg->velocity, i); head_torque[0] = safeAt(msg->effort, i);
         }
         else if (msg->name[i] == "Head_pitch_joint") {
-            head_jointp[1] = msg->position[i]; head_jointv[1] = msg->velocity[i]; head_torque[1] = msg->effort[i];
+            head_jointp[1] = safeAt(msg->position, i); head_jointv[1] = safeAt(msg->velocity, i); head_torque[1] = safeAt(msg->effort, i);
         }
     }
+    joint_state_received = true;
 }
 
 void msgCallbackDualArmCmd(const std_msgs::Float32MultiArray::ConstPtr& msg)
@@ -103,6 +125,87 @@ bool is_cartesian_moving = false;
 MatrixXd cartesian_p_trajectory_L, cartesian_v_trajectory_L, cartesian_a_trajectory_L;
 MatrixXd cartesian_p_trajectory_R, cartesian_v_trajectory_R, cartesian_a_trajectory_R;
 
+void initializePinocchioIndexMaps(const pinocchio::Model& model)
+{
+    const std::vector<std::string> controller_joint_names = {
+        "Waist_joint",
+        "L_shoulder_pitch_joint",
+        "L_shoulder_roll_joint",
+        "L_shoulder_yaw_joint",
+        "L_elbow_joint",
+        "R_shoulder_pitch_joint",
+        "R_shoulder_roll_joint",
+        "R_shoulder_yaw_joint",
+        "R_elbow_joint",
+        "Head_yaw_joint",
+        "Head_pitch_joint"
+    };
+
+    for (int ctrl_idx = 0; ctrl_idx < DoF; ++ctrl_idx) {
+        pinocchio::JointIndex joint_id = model.getJointId(controller_joint_names[ctrl_idx]);
+        ctrl_to_pin[ctrl_idx] = model.joints[joint_id].idx_v();
+    }
+
+    for (int ctrl_idx = 0; ctrl_idx < DoF; ++ctrl_idx) {
+        pin_to_ctrl[ctrl_to_pin[ctrl_idx]] = ctrl_idx;
+    }
+
+    left_arm_active_indices = {ctrl_to_pin[1], ctrl_to_pin[2], ctrl_to_pin[3], ctrl_to_pin[4]};
+    right_arm_active_indices = {ctrl_to_pin[5], ctrl_to_pin[6], ctrl_to_pin[7], ctrl_to_pin[8]};
+
+    ROS_INFO("Pinocchio index map: waist=%d, L=[%d,%d,%d,%d], R=[%d,%d,%d,%d], head=[%d,%d]",
+             ctrl_to_pin[0],
+             ctrl_to_pin[1], ctrl_to_pin[2], ctrl_to_pin[3], ctrl_to_pin[4],
+             ctrl_to_pin[5], ctrl_to_pin[6], ctrl_to_pin[7], ctrl_to_pin[8],
+             ctrl_to_pin[9], ctrl_to_pin[10]);
+}
+
+void fillPinVectorFromControllerArray(const double* controller_order, VectorXd& pin_order)
+{
+    for (int ctrl_idx = 0; ctrl_idx < DoF; ++ctrl_idx) {
+        pin_order(ctrl_to_pin[ctrl_idx]) = controller_order[ctrl_idx];
+    }
+}
+
+void fillControllerArrayFromPinVector(const VectorXd& pin_order, double* controller_order)
+{
+    for (int pin_idx = 0; pin_idx < DoF; ++pin_idx) {
+        controller_order[pin_to_ctrl[pin_idx]] = pin_order(pin_idx);
+    }
+}
+
+void fillHoldCartesianTrajectory(const Vector3d& left, const Vector3d& right, double seconds)
+{
+    int step = std::max(1, static_cast<int>(round(seconds / SAMPLING_TIME_TRAJ)));
+    cartesian_p_trajectory_L.resize(step, 3);
+    cartesian_v_trajectory_L = MatrixXd::Zero(step, 3);
+    cartesian_a_trajectory_L = MatrixXd::Zero(step, 3);
+    cartesian_p_trajectory_R.resize(step, 3);
+    cartesian_v_trajectory_R = MatrixXd::Zero(step, 3);
+    cartesian_a_trajectory_R = MatrixXd::Zero(step, 3);
+
+    for (int i = 0; i < step; ++i) {
+        cartesian_p_trajectory_L.row(i) = left.transpose();
+        cartesian_p_trajectory_R.row(i) = right.transpose();
+    }
+}
+
+void applyJointHoldTarget(const double* hold_q)
+{
+    for (int i = 0; i < DoF; i++) {
+        dual_arm_targetp[i] = hold_q[i];
+        dual_arm_targetv[i] = 0.0;
+        dual_arm_targeta_vec(i) = 0.0;
+    }
+    dual_arm_targetp[0] = 0.0;
+    dual_arm_targetp[9] = 0.0;
+    dual_arm_targetp[10] = head_down_angle;
+
+    dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
+    for (int i = 0; i < DoF; i++) {
+        dual_arm_targeta_vec(i) = PD_acc[i];
+    }
+}
 
 void msgCallbackCartesianCmd(const std_msgs::Float32MultiArray::ConstPtr& msg)
 {
@@ -150,31 +253,17 @@ int main(int argc, char **argv)
     ros::Subscriber sub_aruco_pick = nh.subscribe("/dual_arm/ArucoPickCmd", 10, msgCallbackArucoPick);
     
 
-    #if ARMCTRLMODE == POSITION
-        ros::Publisher dual_armjoint1_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint1_position_controller/command", 100);
-        ros::Publisher dual_armjoint2_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint2_position_controller/command", 100);
-        ros::Publisher dual_armjoint3_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint3_position_controller/command", 100);
-        ros::Publisher dual_armjoint4_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint4_position_controller/command", 100);
-        ros::Publisher dual_armjoint5_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint5_position_controller/command", 100);
-        ros::Publisher dual_armjoint6_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint6_position_controller/command", 100);
-        ros::Publisher dual_armjoint7_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint7_position_controller/command", 100);
-        ros::Publisher dual_armjoint8_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint8_position_controller/command", 100);
-        ros::Publisher dual_armjoint9_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint9_position_controller/command", 100);
-        ros::Publisher dual_armjoint10_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint10_position_controller/command", 100); // 머리 Yaw
-        ros::Publisher dual_armjoint11_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint11_position_controller/command", 100); // 머리 Pitch
-    #elif ARMCTRLMODE == EFFORT
-        ros::Publisher dual_armjoint1_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint1_effort_controller/command", 100);
-        ros::Publisher dual_armjoint2_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint2_effort_controller/command", 100);
-        ros::Publisher dual_armjoint3_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint3_effort_controller/command", 100);
-        ros::Publisher dual_armjoint4_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint4_effort_controller/command", 100);
-        ros::Publisher dual_armjoint5_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint5_effort_controller/command", 100);
-        ros::Publisher dual_armjoint6_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint6_effort_controller/command", 100);
-        ros::Publisher dual_armjoint7_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint7_effort_controller/command", 100);
-        ros::Publisher dual_armjoint8_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint8_effort_controller/command", 100);
-        ros::Publisher dual_armjoint9_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint9_effort_controller/command", 100);
-        ros::Publisher dual_armjoint10_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint10_effort_controller/command", 100); // 머리 Yaw
-        ros::Publisher dual_armjoint11_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint11_effort_controller/command", 100); // 머리 Pitch
-    #endif
+    ros::Publisher dual_armjoint1_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint1_effort_controller/command", 100);
+    ros::Publisher dual_armjoint2_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint2_effort_controller/command", 100);
+    ros::Publisher dual_armjoint3_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint3_effort_controller/command", 100);
+    ros::Publisher dual_armjoint4_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint4_effort_controller/command", 100);
+    ros::Publisher dual_armjoint5_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint5_effort_controller/command", 100);
+    ros::Publisher dual_armjoint6_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint6_effort_controller/command", 100);
+    ros::Publisher dual_armjoint7_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint7_effort_controller/command", 100);
+    ros::Publisher dual_armjoint8_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint8_effort_controller/command", 100);
+    ros::Publisher dual_armjoint9_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint9_effort_controller/command", 100);
+    ros::Publisher dual_armjoint10_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint10_effort_controller/command", 100);
+    ros::Publisher dual_armjoint11_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint11_effort_controller/command", 100);
 
     // 하나로 통합된 조인트 스테이트 구독
     ros::Subscriber sub_joint_state = nh.subscribe("/dual_arm/joint_states", 100, msgCallbackJointState);
@@ -198,6 +287,7 @@ int main(int argc, char **argv)
     pinocchio::Model model;
     pinocchio::urdf::buildModel(urdf_filename, model);
     pinocchio::Data data(model);
+    initializePinocchioIndexMaps(model);
     
     pinocchio::FrameIndex l_EE = model.getFrameId("L_EE_joint");
     pinocchio::FrameIndex r_EE = model.getFrameId("R_EE_joint");
@@ -220,50 +310,55 @@ int main(int argc, char **argv)
         dual_arm_jointv[9] = head_jointv[0];
         dual_arm_jointv[10] = head_jointv[1];
 
+        if (!joint_state_received) {
+            ros::spinOnce();
+            loop_rate.sleep();
+            continue;
+        }
+
+        if (!home_pose_initialized) {
+            for (int i = 0; i < DoF; ++i) {
+                home_jointp[i] = dual_arm_jointp[i];
+            }
+            home_jointp[0] = 0.0;
+            home_jointp[9] = 0.0;
+            home_jointp[10] = 0.0;
+            home_pose_initialized = true;
+            ROS_INFO("Home pose captured from initial joint state.");
+        }
+
         for (int i = 0; i < DoF; i++){
             dual_arm_jointv_lpf[i] = dualarm.LowPassFilter(dual_arm_jointv[i], dual_arm_jointv_before[i], 10);
             dual_arm_jointv_before[i] = dual_arm_jointv_lpf[i];
         }
 
-        dual_arm_jointp_vec(0) = waist_jointp[0];
-        for (int i = 0; i < 4; i++) {
-            dual_arm_jointp_vec(i + 1) = left_arm_jointp[i];
-            dual_arm_jointp_vec(i + 5) = right_arm_jointp[i];
-        }
-        dual_arm_jointp_vec(9) = head_jointp[0];
-        dual_arm_jointp_vec(10) = head_jointp[1];
+        fillPinVectorFromControllerArray(dual_arm_jointp, dual_arm_jointp_vec);
 
-        dual_arm_jointv_vec(0) = waist_jointv[0];
-        for (int i = 0; i < 4; i++) {
-            dual_arm_jointv_vec(i + 1) = left_arm_jointv[i];
-            dual_arm_jointv_vec(i + 5) = right_arm_jointv[i];
-        }
-        dual_arm_jointv_vec(9) = head_jointv[0];
-        dual_arm_jointv_vec(10) = head_jointv[1];
+        fillPinVectorFromControllerArray(dual_arm_jointv, dual_arm_jointv_vec);
 
-        dual_arm_jointv_lpf_vec(0) = waist_jointv[0];
-        for (int i = 0; i < 4; i++) {
-            dual_arm_jointv_lpf_vec(i + 1) = left_arm_jointv[i];
-            dual_arm_jointv_lpf_vec(i + 5) = right_arm_jointv[i];
-        }
-        dual_arm_jointv_lpf_vec(9) = head_jointv[0];
-        dual_arm_jointv_lpf_vec(10) = head_jointv[1];
+        fillPinVectorFromControllerArray(dual_arm_jointv_lpf, dual_arm_jointv_lpf_vec);
 
+        pinocchio::forwardKinematics(model, data, dual_arm_jointp_vec);
+        pinocchio::updateGlobalPlacements(model, data);
+        pinocchio::updateFramePlacements(model, data);
         
         // =========================================================================
         // [최종] 아루코 큐브 파지 시퀀스 상태 관리
         // =========================================================================
-        if (do_aruco_pick) {
+        if (do_aruco_pick && (!is_cartesian_moving || traj_cnt >= cartesian_p_trajectory_L.rows())) {
             // [Phase 0] 머리 숙이기 (팔은 Cartesian 제어로 현재 위치에 완벽 고정!)
             if (pick_step == 1) { 
                 Vector3d current_L = data.oMf[l_EE].translation();
                 Vector3d current_R = data.oMf[r_EE].translation();
                 
-                // 팔이 제자리에 머물도록 시작과 끝이 똑같은 '정지 궤적' 생성
-                dualarm.CartesianTrajectoryQuintic(current_L, current_L, cartesian_p_trajectory_L, cartesian_v_trajectory_L, cartesian_a_trajectory_L);
-                dualarm.CartesianTrajectoryQuintic(current_R, current_R, cartesian_p_trajectory_R, cartesian_v_trajectory_R, cartesian_a_trajectory_R);
+                fillHoldCartesianTrajectory(current_L, current_R, 1.5);
                 
-                head_start_angle = dual_arm_targetp[10]; // 현재 머리 각도 기억
+                head_start_angle = head_jointp[1]; // 현재 머리 각도 기억
+                for (int i = 0; i < DoF; ++i) {
+                    sequence_hold_jointp[i] = dual_arm_jointp[i];
+                }
+                sequence_hold_jointp[0] = 0.0;
+                sequence_hold_jointp[9] = 0.0;
                 
                 traj_cnt = 0;
                 is_cartesian_moving = true; // Joint 모드로 넘어가지 않고 Cartesian 유지!!
@@ -280,22 +375,27 @@ int main(int argc, char **argv)
             // [Phase 1] 비전 확인 및 접근(Approach) 궤적 생성
             else if (pick_step == 3) { 
                 if (!aruco_detected) {
+                    applyJointHoldTarget(sequence_hold_jointp);
                     ROS_WARN_THROTTLE(1.0, "Wait: Aruco marker is not detected yet.");
                 } 
                 else {
                     geometry_msgs::PoseStamped pose_in_base;
                     try {
-                        tf_listener.transformPose("world_link", latest_aruco_pose_cam, pose_in_base);
+                        tf_listener.transformPose("world", latest_aruco_pose_cam, pose_in_base);
                         
                         double transformed_x = pose_in_base.pose.position.x;
                         double transformed_z = pose_in_base.pose.position.z;
-                        ROS_INFO("ArUco Detected! X=%.2f, Z=%.2f", transformed_x, transformed_z);
+                        double cube_x = transformed_x + marker_to_cube_center_x_offset;
+                        double cube_z = transformed_z - marker_to_cube_center_z_offset;
+                        grasp_target_x = cube_x;
+                        grasp_target_z = cube_z;
+                        ROS_INFO("ArUco Detected! marker X=%.2f, Z=%.2f -> cube X=%.2f, Z=%.2f", transformed_x, transformed_z, cube_x, cube_z);
 
                         Vector3d current_L = data.oMf[l_EE].translation();
                         Vector3d current_R = data.oMf[r_EE].translation();
 
-                        Vector3d target_L(transformed_x, 0.10, transformed_z);
-                        Vector3d target_R(transformed_x, -0.10, transformed_z);
+                        Vector3d target_L(cube_x, 0.10, cube_z);
+                        Vector3d target_R(cube_x, -0.10, cube_z);
                         
                         dualarm.CartesianTrajectoryQuintic(current_L, target_L, cartesian_p_trajectory_L, cartesian_v_trajectory_L, cartesian_a_trajectory_L);
                         dualarm.CartesianTrajectoryQuintic(current_R, target_R, cartesian_p_trajectory_R, cartesian_v_trajectory_R, cartesian_a_trajectory_R);
@@ -316,7 +416,54 @@ int main(int argc, char **argv)
                     ROS_INFO("[Phase 2] Squeezing started.");
                 }
             }
-            // pick_step == 5 는 아래쪽 조이기 루프에서 처리
+            // [Phase 2] 접촉 피드백 기반 조이기
+            else if (pick_step == 5) {
+                bool L_done = left_contact;
+                bool R_done = right_contact;
+
+                if (!L_done) current_squeeze_L -= 0.00001; 
+                if (!R_done) current_squeeze_R += 0.00001;
+                current_squeeze_L = std::max(min_grip_half_width, current_squeeze_L);
+                current_squeeze_R = std::min(-min_grip_half_width, current_squeeze_R);
+
+                pinocchio::SE3 target_pose_L = data.oMf[l_EE];
+                target_pose_L.translation()(0) = grasp_target_x;
+                target_pose_L.translation()(1) = current_squeeze_L; 
+                target_pose_L.translation()(2) = grasp_target_z;
+                
+                pinocchio::SE3 target_pose_R = data.oMf[r_EE];
+                target_pose_R.translation()(0) = grasp_target_x;
+                target_pose_R.translation()(1) = current_squeeze_R; 
+                target_pose_R.translation()(2) = grasp_target_z;
+
+                Eigen::VectorXd q_ik = dual_arm_jointp_vec;
+                dualarm.SolvePositionIK_DLS(model, data, l_EE, target_pose_L.translation(), left_arm_active_indices, q_ik);
+                dualarm.SolvePositionIK_DLS(model, data, r_EE, target_pose_R.translation(), right_arm_active_indices, q_ik);
+
+                for (int i = 0; i < DoF; i++) {
+                    dual_arm_targetp[i] = q_ik(ctrl_to_pin[i]);
+                    dual_arm_targetv[i] = 0.0; 
+                    dual_arm_targeta_vec(i) = 0.0;
+                }
+
+                dual_arm_targetp[0] = 0.0;
+                dual_arm_targetp[9] = 0.0;
+                dual_arm_targetp[10] = head_down_angle;
+
+                dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
+                for (int i = 0; i < DoF; i++){
+                    dual_arm_targeta_vec(i) += PD_acc[i];
+                }
+
+                if ((L_done && R_done) || (current_squeeze_L <= min_grip_half_width && current_squeeze_R >= -min_grip_half_width)) {
+                    if (L_done && R_done) {
+                        ROS_INFO("Cube is Secured! Both arms touched.");
+                    } else {
+                        ROS_WARN("Grip reached minimum width before both contact sensors triggered.");
+                    }
+                    pick_step = 6;
+                }
+            }
             // [Phase 3] 들어올리기(Lift) 궤적 생성
             else if (pick_step == 6) { 
                 Vector3d current_L = data.oMf[l_EE].translation();
@@ -333,53 +480,60 @@ int main(int argc, char **argv)
                 pick_step = 7;
                 ROS_INFO("[Phase 3] Lifting Trajectory Generated.");
             }
-            // [Phase 3] 리프팅 대기 및 시퀀스 종료
+            // [Phase 3] 리프팅 대기
             else if (pick_step == 7) { 
                 if (traj_cnt >= cartesian_p_trajectory_L.rows()) {
-                    do_aruco_pick = false; 
-                    pick_step = 0;
-                    ROS_INFO("Cube is Picked Up! Sequence Fully Completed.");
+                    pick_step = 8;
+                    ROS_INFO("[Phase 4] Lift complete. Preparing to put cube down.");
                 }
             }
-        }
+            // [Phase 4] 내려놓기 궤적 생성
+            else if (pick_step == 8) {
+                Vector3d current_L = data.oMf[l_EE].translation();
+                Vector3d current_R = data.oMf[r_EE].translation();
 
-        // =========================================================================
-        // Phase 2: Squeeze (조이기) 실시간 제어 블록
-        // =========================================================================
-        else if (do_aruco_pick && pick_step == 5) {
-            bool L_done = left_contact;
-            bool R_done = right_contact;
+                Vector3d target_L(current_L.x(), current_squeeze_L, current_L.z() - 0.15);
+                Vector3d target_R(current_R.x(), current_squeeze_R, current_R.z() - 0.15);
 
-            if (!L_done) current_squeeze_L -= 0.00005; 
-            if (!R_done) current_squeeze_R += 0.00005;
+                dualarm.CartesianTrajectoryQuintic(current_L, target_L, cartesian_p_trajectory_L, cartesian_v_trajectory_L, cartesian_a_trajectory_L);
+                dualarm.CartesianTrajectoryQuintic(current_R, target_R, cartesian_p_trajectory_R, cartesian_v_trajectory_R, cartesian_a_trajectory_R);
 
-            pinocchio::SE3 target_pose_L = data.oMf[l_EE];
-            target_pose_L.translation()(1) = current_squeeze_L; 
-            
-            pinocchio::SE3 target_pose_R = data.oMf[r_EE];
-            target_pose_R.translation()(1) = current_squeeze_R; 
-
-            Eigen::VectorXd q_ik = dual_arm_jointp_vec;
-            dualarm.SolveIK_DLS(model, data, l_EE, target_pose_L, q_ik);
-            dualarm.SolveIK_DLS(model, data, r_EE, target_pose_R, q_ik);
-
-            for (int i = 0; i < DoF; i++) {
-                dual_arm_targetp[i] = q_ik(i);
-                dual_arm_targetv[i] = 0.0; 
-                dual_arm_targeta_vec(i) = 0.0;
+                traj_cnt = 0;
+                is_cartesian_moving = true;
+                pick_step = 9;
+                ROS_INFO("[Phase 4] Put-down Trajectory Generated.");
             }
-
-            // 고개 강제 고정 덮어쓰기
-            dual_arm_targetp[10] = -40.0 * M_PI / 180.0;
-
-            dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
-            for (int i = 0; i < DoF; i++){
-                dual_arm_targeta_vec(i) += PD_acc[i];
+            // [Phase 4] 내려놓기 완료 대기
+            else if (pick_step == 9) {
+                if (traj_cnt >= cartesian_p_trajectory_L.rows()) {
+                    pick_step = 10;
+                    ROS_INFO("[Phase 5] Cube placed. Releasing grip.");
+                }
             }
+            // [Phase 5] 손 벌리기
+            else if (pick_step == 10) {
+                Vector3d current_L = data.oMf[l_EE].translation();
+                Vector3d current_R = data.oMf[r_EE].translation();
 
-            if (L_done && R_done) {
-                ROS_INFO("Cube is Secured! Both arms touched.");
-                pick_step = 6;
+                Vector3d target_L(current_L.x(), 0.12, current_L.z());
+                Vector3d target_R(current_R.x(), -0.12, current_R.z());
+
+                dualarm.CartesianTrajectoryQuintic(current_L, target_L, cartesian_p_trajectory_L, cartesian_v_trajectory_L, cartesian_a_trajectory_L);
+                dualarm.CartesianTrajectoryQuintic(current_R, target_R, cartesian_p_trajectory_R, cartesian_v_trajectory_R, cartesian_a_trajectory_R);
+
+                traj_cnt = 0;
+                is_cartesian_moving = true;
+                pick_step = 11;
+                ROS_INFO("[Phase 5] Release Trajectory Generated.");
+            }
+            // [Phase 5] 시퀀스 종료
+            else if (pick_step == 11) {
+                if (traj_cnt >= cartesian_p_trajectory_L.rows()) {
+                    do_aruco_pick = false;
+                    is_cartesian_moving = false;
+                    pick_step = 0;
+                    ROS_INFO("Aruco pick-place sequence completed.");
+                }
             }
         }
 
@@ -396,11 +550,11 @@ int main(int argc, char **argv)
 
             Eigen::VectorXd q_ik = dual_arm_jointp_vec;
             
-            dualarm.SolveIK_DLS(model, data, l_EE, target_pose_L, q_ik);
-            dualarm.SolveIK_DLS(model, data, r_EE, target_pose_R, q_ik);
+            dualarm.SolvePositionIK_DLS(model, data, l_EE, target_pose_L.translation(), left_arm_active_indices, q_ik);
+            dualarm.SolvePositionIK_DLS(model, data, r_EE, target_pose_R.translation(), right_arm_active_indices, q_ik);
 
             for (int i = 0; i < DoF; i++) {
-                dual_arm_targetp[i] = q_ik(i);
+                dual_arm_targetp[i] = q_ik(ctrl_to_pin[i]);
                 dual_arm_targetv[i] = 0.0; 
                 dual_arm_targeta_vec(i) = 0.0;
             }
@@ -408,13 +562,18 @@ int main(int argc, char **argv)
             // 💡 핵심 덮어쓰기: IK 연산이 끝난 후, 오직 머리(10번 관절)만 수동으로 조작!
             if (do_aruco_pick) {
                 if (pick_step == 2) {
-                    // 1초 동안 서서히 고개를 숙이는 애니메이션
-                    double target_angle = -40.0 * M_PI / 180.0;
+                    // 머리를 숙이는 동안 허리, 팔, head yaw는 IK 결과 대신 시작 자세에 고정한다.
                     double progress = (double)traj_cnt / cartesian_p_trajectory_L.rows();
-                    dual_arm_targetp[10] = head_start_angle + (target_angle - head_start_angle) * progress;
+                    for (int i = 0; i < DoF; ++i) {
+                        dual_arm_targetp[i] = sequence_hold_jointp[i];
+                    }
+                    dual_arm_targetp[0] = 0.0;
+                    dual_arm_targetp[9] = 0.0;
+                    dual_arm_targetp[10] = head_start_angle + (head_down_angle - head_start_angle) * progress;
                 } else {
-                    // 이후에는 계속 40도로 고정
-                    dual_arm_targetp[10] = -40.0 * M_PI / 180.0;
+                    dual_arm_targetp[0] = 0.0;
+                    dual_arm_targetp[9] = 0.0;
+                    dual_arm_targetp[10] = head_down_angle;
                 }
             }
 
@@ -433,8 +592,11 @@ int main(int argc, char **argv)
                 // Cartesian 유지
             } else {
                 for (int i = 0; i < DoF; i++) {
-                    dual_arm_targetp[i] = dual_arm_jointp_trajectory.bottomRows(1)(0, i);
+                    dual_arm_targetp[i] = home_jointp[i];
                 }
+                dual_arm_targetp[0] = 0.0;
+                dual_arm_targetp[9] = 0.0;
+                dual_arm_targetp[10] = 0.0;
             }
             for (int i = 0; i < DoF; i++) {
                 dual_arm_targetv[i] = 0.0; 
@@ -446,46 +608,23 @@ int main(int argc, char **argv)
             }
         }
 
-        for (int i = 0; i < DoF; ++i) {
-            dual_arm_targetp_vec(i) = dual_arm_targetp[i];
-        }
+        fillPinVectorFromControllerArray(dual_arm_targetp, dual_arm_targetp_vec);
 
-        gravity_torque = pinocchio::computeGeneralizedGravity(model, data, dual_arm_jointp_vec);
-        dynamic_torque = pinocchio::rnea(model, data, dual_arm_jointp_vec, dual_arm_jointv_vec, dual_arm_targeta_vec);
-
-        for (int i = 0; i < DoF; i++) {
-            target_torque[i] = dynamic_torque(i);
-        }
-        
         pinocchio::forwardKinematics(model, data, dual_arm_targetp_vec);
         pinocchio::updateGlobalPlacements(model, data);
         pinocchio::updateFramePlacements(model, data);
         
-        #if ARMCTRLMODE == POSITION
-            waist_joint_msg.data            = dual_arm_targetp[0];
-            shoulder_pitch_l_joint_msg.data = dual_arm_targetp[1];
-            shoulder_roll_l_joint_msg.data  = dual_arm_targetp[2];
-            shoulder_yaw_l_joint_msg.data   = dual_arm_targetp[3];
-            elbow_l_joint_msg.data          = dual_arm_targetp[4];
-            shoulder_pitch_r_joint_msg.data = dual_arm_targetp[5];
-            shoulder_roll_r_joint_msg.data  = dual_arm_targetp[6];
-            shoulder_yaw_r_joint_msg.data   = dual_arm_targetp[7];
-            elbow_r_joint_msg.data          = dual_arm_targetp[8];
-            head_yaw_joint_msg.data         = dual_arm_targetp[9];
-            head_pitch_joint_msg.data       = dual_arm_targetp[10];
-        #elif ARMCTRLMODE == EFFORT
-            waist_joint_msg.data            = target_torque[0];
-            shoulder_pitch_l_joint_msg.data = target_torque[1];
-            shoulder_roll_l_joint_msg.data  = target_torque[2];
-            shoulder_yaw_l_joint_msg.data   = target_torque[3];
-            elbow_l_joint_msg.data          = target_torque[4];
-            shoulder_pitch_r_joint_msg.data = target_torque[5];
-            shoulder_roll_r_joint_msg.data  = target_torque[6];
-            shoulder_yaw_r_joint_msg.data   = target_torque[7];
-            elbow_r_joint_msg.data          = target_torque[8];
-            head_yaw_joint_msg.data         = target_torque[9];
-            head_pitch_joint_msg.data       = target_torque[10];
-        #endif
+        waist_joint_msg.data            = dual_arm_targetp[0];
+        shoulder_pitch_l_joint_msg.data = dual_arm_targetp[1];
+        shoulder_roll_l_joint_msg.data  = dual_arm_targetp[2];
+        shoulder_yaw_l_joint_msg.data   = dual_arm_targetp[3];
+        elbow_l_joint_msg.data          = dual_arm_targetp[4];
+        shoulder_pitch_r_joint_msg.data = dual_arm_targetp[5];
+        shoulder_roll_r_joint_msg.data  = dual_arm_targetp[6];
+        shoulder_yaw_r_joint_msg.data   = dual_arm_targetp[7];
+        elbow_r_joint_msg.data          = dual_arm_targetp[8];
+        head_yaw_joint_msg.data         = dual_arm_targetp[9];
+        head_pitch_joint_msg.data       = dual_arm_targetp[10];
     
         dual_armjoint1_pub.publish(waist_joint_msg);
         dual_armjoint2_pub.publish(shoulder_pitch_l_joint_msg);
