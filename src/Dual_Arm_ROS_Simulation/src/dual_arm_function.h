@@ -6,6 +6,7 @@
 #include "pinocchio/algorithm/kinematics.hpp"   
 #include "pinocchio/algorithm/frames.hpp"       
 #include "pinocchio/algorithm/jacobian.hpp"     
+#include "pinocchio/algorithm/rnea.hpp"
 #include <pinocchio/spatial/se3.hpp>
 #include <pinocchio/spatial/explog.hpp>
 
@@ -82,9 +83,11 @@ MatrixXd dual_arm_jointp_trajectory = MatrixXd::Zero(1,DoF);
 MatrixXd dual_arm_jointv_trajectory = MatrixXd::Zero(1,DoF);
 MatrixXd dual_arm_jointa_trajectory = MatrixXd::Zero(1,DoF);
 
-// 뒤에 머리 제어를 위한 PD 게인 추가 (머리는 부하가 적으므로 게인을 상대적으로 낮게 설정)
-double Kp[DoF] = { 500, 500, 500, 500, 500, 500, 500, 500, 500, 80, 80 };
-double Kd[DoF] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 4 };
+// RNEA torque control uses the same conservative gains previously used by
+// Gazebo's position controllers.  The old 500/1 values are unstable when
+// applied directly as desired joint accelerations.
+double Kp[DoF] = { 45, 45, 45, 45, 45, 45, 45, 45, 45, 20, 20 };
+double Kd[DoF] = { 4, 4, 4, 4, 4, 4, 4, 4, 4, 2.5, 2.5 };
 
 double PD_torque[DoF] = {0, };
 double PD_acc[DoF] = {0, };
@@ -105,6 +108,7 @@ class DualArmControl
         void PDController(double* target_q, double* current_q, double* target_q_dot, double* current_q_dot, double* PDtorque);
         bool SolveIK_DLS(pinocchio::Model& model, pinocchio::Data& data, const pinocchio::FrameIndex frame_id, const pinocchio::SE3& target_pose, Eigen::VectorXd& q_inout);
         bool SolvePositionIK_DLS(pinocchio::Model& model, pinocchio::Data& data, const pinocchio::FrameIndex frame_id, const Eigen::Vector3d& target_position, const std::vector<int>& active_indices, Eigen::VectorXd& q_inout);
+        void ApplyArmPostureConstraint(Eigen::VectorXd& q_inout, bool is_left_arm) const;
 };
 
 DualArmControl dualarm; 

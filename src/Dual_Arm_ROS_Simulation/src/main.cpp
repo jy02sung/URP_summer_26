@@ -10,6 +10,9 @@ bool right_contact = false;
 bool do_aruco_pick = false;
 bool joint_state_received = false;
 bool home_pose_initialized = false;
+bool startup_sequence_done = false;
+ros::Time startup_step_begin_time;
+int startup_step = 0;
 int pick_step = 0; 
 double current_squeeze_L = 0.10;
 double current_squeeze_R = -0.10;
@@ -19,6 +22,9 @@ double grasp_target_z = 0.80;
 double home_jointp[DoF] = {0,};
 double sequence_hold_jointp[DoF] = {0,};
 const double head_down_angle = 40.0 * M_PI / 180.0;
+const double startup_wait_duration = 1.0;
+const double startup_lift_distance = 0.14;
+const double startup_forward_distance = 0.16;
 const double min_grip_half_width = -0.03;
 const double marker_to_cube_center_x_offset = 0.13;
 const double marker_to_cube_center_z_offset = 0.21;
@@ -190,6 +196,16 @@ void fillHoldCartesianTrajectory(const Vector3d& left, const Vector3d& right, do
     }
 }
 
+void copyCurrentJointPoseTo(double* target_q)
+{
+    for (int i = 0; i < DoF; ++i) {
+        target_q[i] = dual_arm_jointp[i];
+    }
+    target_q[0] = 0.0;
+    target_q[9] = 0.0;
+    target_q[10] = 0.0;
+}
+
 void applyJointHoldTarget(const double* hold_q)
 {
     for (int i = 0; i < DoF; i++) {
@@ -291,6 +307,8 @@ int main(int argc, char **argv)
     
     pinocchio::FrameIndex l_EE = model.getFrameId("L_EE_joint");
     pinocchio::FrameIndex r_EE = model.getFrameId("R_EE_joint");
+    const double effort_limits[DoF] = {100.0, 55.0, 55.0, 30.0, 30.0,
+                                        55.0, 55.0, 30.0, 30.0, 30.0, 30.0};
 
     while(ros::ok())
     {
@@ -317,14 +335,11 @@ int main(int argc, char **argv)
         }
 
         if (!home_pose_initialized) {
-            for (int i = 0; i < DoF; ++i) {
-                home_jointp[i] = dual_arm_jointp[i];
-            }
-            home_jointp[0] = 0.0;
-            home_jointp[9] = 0.0;
-            home_jointp[10] = 0.0;
+            copyCurrentJointPoseTo(home_jointp);
+            copyCurrentJointPoseTo(sequence_hold_jointp);
             home_pose_initialized = true;
-            ROS_INFO("Home pose captured from initial joint state.");
+            startup_step_begin_time = ros::Time::now();
+            ROS_INFO("Startup Cartesian sequence initialized from the settled spawn pose.");
         }
 
         for (int i = 0; i < DoF; i++){
@@ -345,7 +360,51 @@ int main(int argc, char **argv)
         // =========================================================================
         // [최종] 아루코 큐브 파지 시퀀스 상태 관리
         // =========================================================================
-        if (do_aruco_pick && (!is_cartesian_moving || traj_cnt >= cartesian_p_trajectory_L.rows())) {
+        if (!startup_sequence_done && !do_aruco_pick &&
+            (!is_cartesian_moving || traj_cnt >= cartesian_p_trajectory_L.rows())) {
+            if (startup_step == 0) {
+                applyJointHoldTarget(sequence_hold_jointp);
+                if ((ros::Time::now() - startup_step_begin_time).toSec() >= startup_wait_duration) {
+                    Vector3d current_L = data.oMf[l_EE].translation();
+                    Vector3d current_R = data.oMf[r_EE].translation();
+                    Vector3d target_L = current_L;
+                    Vector3d target_R = current_R;
+                    target_L.z() += startup_lift_distance;
+                    target_R.z() += startup_lift_distance;
+
+                    dualarm.CartesianTrajectoryQuintic(current_L, target_L, cartesian_p_trajectory_L, cartesian_v_trajectory_L, cartesian_a_trajectory_L);
+                    dualarm.CartesianTrajectoryQuintic(current_R, target_R, cartesian_p_trajectory_R, cartesian_v_trajectory_R, cartesian_a_trajectory_R);
+                    traj_cnt = 0;
+                    is_cartesian_moving = true;
+                    startup_step = 1;
+                    ROS_INFO("[Startup] Lift trajectory generated.");
+                }
+            }
+            else if (startup_step == 1) {
+                Vector3d current_L = data.oMf[l_EE].translation();
+                Vector3d current_R = data.oMf[r_EE].translation();
+                Vector3d target_L = current_L;
+                Vector3d target_R = current_R;
+                target_L.x() += startup_forward_distance;
+                target_R.x() += startup_forward_distance;
+
+                dualarm.CartesianTrajectoryQuintic(current_L, target_L, cartesian_p_trajectory_L, cartesian_v_trajectory_L, cartesian_a_trajectory_L);
+                dualarm.CartesianTrajectoryQuintic(current_R, target_R, cartesian_p_trajectory_R, cartesian_v_trajectory_R, cartesian_a_trajectory_R);
+                traj_cnt = 0;
+                is_cartesian_moving = true;
+                startup_step = 2;
+                ROS_INFO("[Startup] Forward trajectory generated.");
+            }
+            else if (startup_step == 2) {
+                copyCurrentJointPoseTo(home_jointp);
+                copyCurrentJointPoseTo(sequence_hold_jointp);
+                startup_sequence_done = true;
+                is_cartesian_moving = false;
+                traj_cnt = 0;
+                ROS_INFO("[Startup] Cartesian settling pose captured as new home.");
+            }
+        }
+        else if (do_aruco_pick && (!is_cartesian_moving || traj_cnt >= cartesian_p_trajectory_L.rows())) {
             // [Phase 0] 머리 숙이기 (팔은 Cartesian 제어로 현재 위치에 완벽 고정!)
             if (pick_step == 1) { 
                 Vector3d current_L = data.oMf[l_EE].translation();
@@ -438,7 +497,9 @@ int main(int argc, char **argv)
 
                 Eigen::VectorXd q_ik = dual_arm_jointp_vec;
                 dualarm.SolvePositionIK_DLS(model, data, l_EE, target_pose_L.translation(), left_arm_active_indices, q_ik);
+                dualarm.ApplyArmPostureConstraint(q_ik, true);
                 dualarm.SolvePositionIK_DLS(model, data, r_EE, target_pose_R.translation(), right_arm_active_indices, q_ik);
+                dualarm.ApplyArmPostureConstraint(q_ik, false);
 
                 for (int i = 0; i < DoF; i++) {
                     dual_arm_targetp[i] = q_ik(ctrl_to_pin[i]);
@@ -551,7 +612,9 @@ int main(int argc, char **argv)
             Eigen::VectorXd q_ik = dual_arm_jointp_vec;
             
             dualarm.SolvePositionIK_DLS(model, data, l_EE, target_pose_L.translation(), left_arm_active_indices, q_ik);
+            dualarm.ApplyArmPostureConstraint(q_ik, true);
             dualarm.SolvePositionIK_DLS(model, data, r_EE, target_pose_R.translation(), right_arm_active_indices, q_ik);
+            dualarm.ApplyArmPostureConstraint(q_ik, false);
 
             for (int i = 0; i < DoF; i++) {
                 dual_arm_targetp[i] = q_ik(ctrl_to_pin[i]);
@@ -613,18 +676,36 @@ int main(int argc, char **argv)
         pinocchio::forwardKinematics(model, data, dual_arm_targetp_vec);
         pinocchio::updateGlobalPlacements(model, data);
         pinocchio::updateFramePlacements(model, data);
+
+        // Use the current state and a PD desired acceleration for inverse dynamics.
+        // All Pinocchio vectors use its joint order; commands are remapped below.
+        dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv,
+                             dual_arm_jointv_lpf, PD_acc);
+        Eigen::VectorXd desired_acceleration_pin = Eigen::VectorXd::Zero(model.nv);
+        for (int ctrl_index = 0; ctrl_index < DoF; ++ctrl_index) {
+            desired_acceleration_pin(ctrl_to_pin[ctrl_index]) = PD_acc[ctrl_index];
+        }
+        const Eigen::VectorXd dynamic_torque = pinocchio::rnea(
+            model, data, dual_arm_jointp_vec, dual_arm_jointv_lpf_vec,
+            desired_acceleration_pin);
         
-        waist_joint_msg.data            = dual_arm_targetp[0];
-        shoulder_pitch_l_joint_msg.data = dual_arm_targetp[1];
-        shoulder_roll_l_joint_msg.data  = dual_arm_targetp[2];
-        shoulder_yaw_l_joint_msg.data   = dual_arm_targetp[3];
-        elbow_l_joint_msg.data          = dual_arm_targetp[4];
-        shoulder_pitch_r_joint_msg.data = dual_arm_targetp[5];
-        shoulder_roll_r_joint_msg.data  = dual_arm_targetp[6];
-        shoulder_yaw_r_joint_msg.data   = dual_arm_targetp[7];
-        elbow_r_joint_msg.data          = dual_arm_targetp[8];
-        head_yaw_joint_msg.data         = dual_arm_targetp[9];
-        head_pitch_joint_msg.data       = dual_arm_targetp[10];
+        double target_torque[DoF] = {0.0};
+        for (int ctrl_index = 0; ctrl_index < DoF; ++ctrl_index) {
+            target_torque[ctrl_index] = std::max(-effort_limits[ctrl_index],
+                std::min(dynamic_torque(ctrl_to_pin[ctrl_index]), effort_limits[ctrl_index]));
+        }
+
+        waist_joint_msg.data            = target_torque[0];
+        shoulder_pitch_l_joint_msg.data = target_torque[1];
+        shoulder_roll_l_joint_msg.data  = target_torque[2];
+        shoulder_yaw_l_joint_msg.data   = target_torque[3];
+        elbow_l_joint_msg.data          = target_torque[4];
+        shoulder_pitch_r_joint_msg.data = target_torque[5];
+        shoulder_roll_r_joint_msg.data  = target_torque[6];
+        shoulder_yaw_r_joint_msg.data   = target_torque[7];
+        elbow_r_joint_msg.data          = target_torque[8];
+        head_yaw_joint_msg.data         = target_torque[9];
+        head_pitch_joint_msg.data       = target_torque[10];
     
         dual_armjoint1_pub.publish(waist_joint_msg);
         dual_armjoint2_pub.publish(shoulder_pitch_l_joint_msg);

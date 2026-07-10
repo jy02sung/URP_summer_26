@@ -247,3 +247,21 @@ bool DualArmControl::SolvePositionIK_DLS(pinocchio::Model& model, pinocchio::Dat
     q_inout = q;
     return success;
 }
+
+void DualArmControl::ApplyArmPostureConstraint(Eigen::VectorXd& q_inout, bool is_left_arm) const
+{
+    const int shoulder_pitch_index = is_left_arm ? 3 : 7;
+    const int shoulder_roll_index = is_left_arm ? 4 : 8;
+    const int shoulder_yaw_index = is_left_arm ? 5 : 9;
+    const int elbow_index = is_left_arm ? 6 : 10;
+
+    // Keep the arm in a human-like bending branch. In this model, positive elbow
+    // flexion tends to produce the elbow-up solution during position-only IK.
+    q_inout(elbow_index) = std::min(q_inout(elbow_index), 0.0);
+
+    // Light shoulder bounds keep the solver from rolling/yawing excessively to
+    // compensate after the elbow branch is clamped.
+    q_inout(shoulder_pitch_index) = std::max(-1.35, std::min(0.35, q_inout(shoulder_pitch_index)));
+    q_inout(shoulder_roll_index) = std::max(-0.65, std::min(0.65, q_inout(shoulder_roll_index)));
+    q_inout(shoulder_yaw_index) = std::max(-0.75, std::min(0.75, q_inout(shoulder_yaw_index)));
+}
