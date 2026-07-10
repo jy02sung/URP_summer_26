@@ -41,3 +41,11 @@ dual_arm:
     type: position_controllers/JointPositionController
     joint: R_elbow_joint
     pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint10_position_controller:
+    type: position_controllers/JointPositionController
+    joint: Head_yaw_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint11_position_controller:
+    type: position_controllers/JointPositionController
+    joint: Head_pitch_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}

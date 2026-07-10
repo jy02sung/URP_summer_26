@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="aruco_box_26">
+    <!-- dynamic: 양팔이 y축 양쪽에서 표면 안쪽 5mm를 스퀴즈(grasp_offset, main.cpp)한 상태로
+         PHASE_GRASP_TO_PLACE 구간에서 임피던스 제어(가상 스프링-댐퍼, F/T 센서 피드백)를 유지하면
+         마찰(mu=1.2)로 실제 접촉 파지가 이루어진다. 더 이상 pose를 강제로 갱신하지 않는다. -->
+    <static>false</static>
+    <link name="link">
+      <inertial>
+        <mass>0.2</mass>
+        <!-- solid cube, side 0.1m: ixx=iyy=izz = (1/6)*m*s^2 -->
+        <inertia>
+          <ixx>0.000333</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.000333</iyy>
+          <iyz>0</iyz>
+          <izz>0.000333</izz>
+        </inertia>
+      </inertial>
+
+      <collision name="collision">
+        <geometry>
+          <box>
+            <size>0.1 0.1 0.1</size>
+          </box>
+        </geometry>
+        <surface>
+          <friction>
+            <ode>
+              <mu>1.2</mu>
+              <mu2>1.2</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+
+      <visual name="visual_box">
+        <geometry>
+          <box>
+            <size>0.1 0.1 0.1</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.82 0.70 0.55 1</ambient>
+          <diffuse>0.82 0.70 0.55 1</diffuse>
+        </material>
+      </visual>
+
+      <!-- 5cm ArUco id=26 marker patch on the top face (+Z).
+           The head camera looks downward during scan, so a top-facing marker
+           is more consistent with the actual pick scene than a side-facing one. -->
+      <visual name="visual_marker_26">
+        <pose>0 0 0.0505 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.05 0.05 0.001</size>
+          </box>
+        </geometry>
+        <material>
+          <script>
+            <uri>model://aruco_marker_26/materials/scripts</uri>
+            <uri>model://aruco_marker_26/materials/textures</uri>
+            <name>Aruco/Marker26</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

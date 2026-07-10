@@ -1,7 +1,13 @@
 #include "dual_arm_function.h"
 
-DualArmControl::DualArmControl() {}
-DualArmControl::~DualArmControl() {}
+DualArmControl::DualArmControl()
+{
+}
+
+DualArmControl::~DualArmControl()
+{
+}
+
 
 double DualArmControl::LowPassFilter(double &input, double &output_before, double cutoff_frequency)
 {
@@ -12,10 +18,13 @@ double DualArmControl::LowPassFilter(double &input, double &output_before, doubl
 	return output;
 }
 
-// -----------------------------------Trajectory Planning----------------------------------//
+
+////////////////////////////////////////////////////////////////////////////////////////////
+//-----------------------------------Trajectory Planning----------------------------------//
+////////////////////////////////////////////////////////////////////////////////////////////
 void DualArmControl::JointTrajectoryTrapezoidal(double* q_ini, double* q_cmd, MatrixXd& q_out, MatrixXd& q_dot_out)
 {
-	double q_dot_des = 1.2; //rad/s
+	double q_dot_des = 0.6; //rad/s
 	double q_double_dot_des = 1; //rad/s^2
 
 	double max_q_error = 0;
@@ -24,9 +33,10 @@ void DualArmControl::JointTrajectoryTrapezoidal(double* q_ini, double* q_cmd, Ma
 			max_q_error = fabs(q_cmd[i] - q_ini[i]);
 	}
 
-	double Tf = max_q_error / q_dot_des; 
+	double Tf = max_q_error / q_dot_des; // Whole time
+	// double Tf = 1.5;
 
-	double Tb; 
+	double Tb; // blending time
 	if (q_double_dot_des >= 4*max_q_error/pow(Tf,2)) {
 		Tb = Tf/2 - sqrt(pow(q_double_dot_des*Tf,2) - 4*q_double_dot_des*max_q_error) / (2*q_double_dot_des);
 	}
@@ -63,82 +73,91 @@ void DualArmControl::JointTrajectoryTrapezoidal(double* q_ini, double* q_cmd, Ma
 
 void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, MatrixXd& q_out, MatrixXd& q_dot_out, MatrixXd& q_acc_out)
 {
-	double q_dot_des = 0.5;  
+	double q_dot_des = 0.5;  // 원하는 각속도 (rad/s)
 
-	double max_q_error = 0;
-	for (int i = 0; i < DoF; i++) {
-	double error = fabs(q_cmd[i] - q_ini[i]);
-	if (max_q_error < error)
-	max_q_error = error;
+	// 관절 인덱스 레이아웃: 0=waist,1=head_yaw,2=head_pitch,3~6=왼팔,7~10=오른팔
+	// 왼팔/오른팔 Tf를 각자의 최대 오차로 독립 계산 -> 변위가 작은 팔이 큰 팔의 Tf에 끌려가서
+	// 초반 속도가 지나치게 작아지는(=늦게 움직이는 것처럼 보이는) 문제를 제거한다.
+	// waist/head는 팔이 아니므로 셋 중 가장 긴 Tf(Tf_max)에 맞춘다.
+	double max_error_left = 0, max_error_right = 0, max_error_wh = 0;
+	for (int i = 3; i <= 6; i++) {
+		double error = fabs(q_cmd[i] - q_ini[i]);
+		if (max_error_left < error) max_error_left = error;
 	}
-	double Tf = max_q_error / q_dot_des;  
-    if (Tf < 0.1) Tf = 0.1; // 너무 짧은 시간 방지
+	for (int i = 7; i <= 10; i++) {
+		double error = fabs(q_cmd[i] - q_ini[i]);
+		if (max_error_right < error) max_error_right = error;
+	}
+	// waist/head(0~2) 자체의 변위도 Tf 계산에 반영한다. 이게 빠지면 팔이 하나도 안 움직이는
+	// head-only 명령에서 Tf_max=0 -> no_motion 처리되어 head/waist 궤적이 통째로 무시되는
+	// 버그가 있었다 (Head 자동 스캔 진단 중 실측으로 확인: head_pitch 단독 명령이 전혀 반영되지 않음).
+	for (int i = 0; i <= 2; i++) {
+		double error = fabs(q_cmd[i] - q_ini[i]);
+		if (max_error_wh < error) max_error_wh = error;
+	}
 
-	int step = round(Tf / SAMPLING_TIME_TRAJ);
+	double Tf_left  = max_error_left  / q_dot_des;
+	double Tf_right = max_error_right / q_dot_des;
+	double Tf_wh    = max_error_wh    / q_dot_des;
+	double Tf_max   = std::max({Tf_left, Tf_right, Tf_wh});   // waist/head는 셋 중 가장 긴 Tf에 맞춤
+
+	// 관절별 Tf 배열 (재생은 전부 t=0에서 동시에 시작, 각자 자신의 Tf에 도달하면 그 자리에서 정지 유지)
+	double Tf[DoF];
+	Tf[0] = Tf_max; Tf[1] = Tf_max; Tf[2] = Tf_max;
+	for (int i = 3; i <= 6;  i++) Tf[i] = Tf_left;
+	for (int i = 7; i <= 10; i++) Tf[i] = Tf_right;
+
+	// 전체 재생 구간(step)은 가장 긴 Tf(=Tf_max) 기준. 이보다 Tf가 짧은 관절은 도달 후 목표값 유지.
+	int step = round(Tf_max / SAMPLING_TIME_TRAJ);
+	if (step < 1) step = 1;
 	q_out.resize(step, DoF);
 	q_dot_out.resize(step, DoF);
 	q_acc_out.resize(step, DoF);
 
+	// 각 관절별로 Quintic Polynomial 계수를 계산하고, 위치, 속도, 가속도 생성
+	// 경계 조건: q(0)=q0, q(Tf)=qf,  dot{q}(0)=dot{q}(Tf)=0, ddot{q}(0)=ddot{q}(Tf)=0
+	// 그러면: c0 = q0, c1 = 0, c2 = 0,
+	// c3 = 10*(qf - q0) / Tf^3, c4 = -15*(qf - q0) / Tf^4, c5 = 6*(qf - q0) / Tf^5.
 	for (int i = 0; i < DoF; i++)
 	{
-	double q0 = q_ini[i];
-	double qf = q_cmd[i];
+		double q0 = q_ini[i];
+		double qf = q_cmd[i];
+		double Tf_i = Tf[i];
 
-	double c0 = q0;
-	double c1 = 0.0;
-	double c2 = 0.0;
-	double c3 = 10.0 * (qf - q0) / pow(Tf, 3);
-	double c4 = -15.0 * (qf - q0) / pow(Tf, 4);
-	double c5 = 6.0 * (qf - q0) / pow(Tf, 5);
+		bool no_motion = (Tf_i < 1e-9);  // 해당 관절(그룹)의 목표 변위가 사실상 0인 경우
 
-	for (int j = 0; j < step; j++)
-	{
-	double t = j * SAMPLING_TIME_TRAJ;
-	q_out(j, i) = c0 + c1*t + c2*t*t + c3*pow(t, 3) + c4*pow(t, 4) + c5*pow(t, 5);
-	q_dot_out(j, i) = c1 + 2.0*c2*t + 3.0*c3*t*t + 4.0*c4*pow(t, 3) + 5.0*c5*pow(t, 4);
-	q_acc_out(j, i) = 2.0*c2 + 6.0*c3*t + 12.0*c4*t*t + 20.0*c5*pow(t, 3);
-	}
+		double c0 = q0;
+		double c1 = 0.0;
+		double c2 = 0.0;
+		double c3 = no_motion ? 0.0 : 10.0 * (qf - q0) / pow(Tf_i, 3);
+		double c4 = no_motion ? 0.0 : -15.0 * (qf - q0) / pow(Tf_i, 4);
+		double c5 = no_motion ? 0.0 : 6.0 * (qf - q0) / pow(Tf_i, 5);
+
+		for (int j = 0; j < step; j++)
+		{
+			double t = j * SAMPLING_TIME_TRAJ;
+
+			if (t >= Tf_i) {
+				// 자신의 Tf에 먼저 도달한 관절(waist/head보다 짧은 팔)은 목표 자세에서 정지 유지
+				q_out(j, i) = qf;
+				q_dot_out(j, i) = 0.0;
+				q_acc_out(j, i) = 0.0;
+				continue;
+			}
+
+			// 위치: q(t) = c0 + c1*t + c2*t^2 + c3*t^3 + c4*t^4 + c5*t^5
+			q_out(j, i) = c0 + c1*t + c2*t*t + c3*pow(t, 3) + c4*pow(t, 4) + c5*pow(t, 5);
+			// 속도: q_dot(t) = c1 + 2*c2*t + 3*c3*t^2 + 4*c4*t^3 + 5*c5*t^4
+			q_dot_out(j, i) = c1 + 2.0*c2*t + 3.0*c3*t*t + 4.0*c4*pow(t, 3) + 5.0*c5*pow(t, 4);
+			// 가속도: q_double_dot(t) = 2*c2 + 6*c3*t + 12*c4*t^2 + 20*c5*t^3
+			q_acc_out(j, i) = 2.0*c2 + 6.0*c3*t + 12.0*c4*t*t + 20.0*c5*pow(t, 3);
+		}
 	}
 }
 
-// 3차원 공간상의 직선 경로를 생성하는 함수 (Quintic 활용)
-void DualArmControl::CartesianTrajectoryQuintic(const Vector3d& p_ini, const Vector3d& p_cmd, MatrixXd& p_out, MatrixXd& p_dot_out, MatrixXd& p_acc_out)
-{
-    double v_des = 0.06; // 손끝 속도 (m/s)
-
-    double distance = (p_cmd - p_ini).norm();
-    double Tf = distance / v_des;
-    if (Tf < 0.1) Tf = 0.1;
-
-    int step = round(Tf / SAMPLING_TIME_TRAJ);
-    p_out.resize(step, 3);
-    p_dot_out.resize(step, 3);
-    p_acc_out.resize(step, 3);
-
-    for (int i = 0; i < 3; i++)
-    {
-        double p0 = p_ini(i);
-        double pf = p_cmd(i);
-
-        double c0 = p0;
-        double c1 = 0.0;
-        double c2 = 0.0;
-        double c3 = 10.0 * (pf - p0) / pow(Tf, 3);
-        double c4 = -15.0 * (pf - p0) / pow(Tf, 4);
-        double c5 = 6.0 * (pf - p0) / pow(Tf, 5);
-
-        for (int j = 0; j < step; j++)
-        {
-            double t = j * SAMPLING_TIME_TRAJ;
-            p_out(j, i) = c0 + c1*t + c2*t*t + c3*pow(t, 3) + c4*pow(t, 4) + c5*pow(t, 5);
-            p_dot_out(j, i) = c1 + 2.0*c2*t + 3.0*c3*t*t + 4.0*c4*pow(t, 3) + 5.0*c5*pow(t, 4);
-            p_acc_out(j, i) = 2.0*c2 + 6.0*c3*t + 12.0*c4*t*t + 20.0*c5*pow(t, 3);
-        }
-    }
-}
-
-
-// ---------------------------------------Controller---------------------------------------//
+////////////////////////////////////////////////////////////////////////////////////////////
+//---------------------------------------Controller---------------------------------------//
+////////////////////////////////////////////////////////////////////////////////////////////
 void DualArmControl::PDController(double* target_q, double* current_q, double* target_q_dot, double* current_q_dot, double* PDtorque)
 {
     double q_error[DoF] = {0, };
@@ -165,103 +184,142 @@ void DualArmControl::PDController(double* target_q, double* current_q, double* t
     }
 }
 
-// =========================================================================================
-// DLS 역기구학 솔버 구현부
-// =========================================================================================
-bool DualArmControl::SolveIK_DLS(pinocchio::Model& model, pinocchio::Data& data, const pinocchio::FrameIndex frame_id, const pinocchio::SE3& target_pose, Eigen::VectorXd& q_inout)
+
+
+////////////////////////////////////////////////////////////////////////////////////////////
+//----------------------------------- Inverse Kinematics ---------------------------------//
+////////////////////////////////////////////////////////////////////////////////////////////
+// DLS(Damped Least Squares) 위치 IK.
+// AGENTS 제약에 맞춰 waist/head를 고정하고, 왼팔 4축(3~6) / 오른팔 4축(7~10)을
+// 각각 독립적으로 푼 뒤 하나의 q 벡터로 합친다.
+void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& data,
+                                      pinocchio::FrameIndex l_EE, pinocchio::FrameIndex r_EE,
+                                      const Vector3d& target_L, const Vector3d& target_R,
+                                      const VectorXd& q_seed, VectorXd& q_out)
 {
-    const int max_iter = 1000;
-    const double eps = 1e-4; 
-    const double lambda = 0.1; 
-    const double dt = 0.5; 
+    const double lambda = 0.1;    // DLS 댐핑
+    const double tol    = 1e-4;   // 수렴 허용 오차 [m]
+    const int    maxIter= 300;    // 최대 반복
+    const double step   = 1.0;    // 스텝 스케일 (= K·Δt 개념, 발산하면 줄이기)
 
-    Eigen::VectorXd q = q_inout;
-    Eigen::MatrixXd J(6, model.nv);
-    bool success = false;
+    VectorXd q = q_seed;
+    const int left_arm_idx[4] = {3, 4, 5, 6};
+    const int right_arm_idx[4] = {7, 8, 9, 10};
 
-    for (int it = 0; it < max_iter; ++it) {
-        pinocchio::forwardKinematics(model, data, q);
-        pinocchio::updateFramePlacements(model, data);
-        
-        const pinocchio::SE3 iMd = data.oMf[frame_id].actInv(target_pose);
-        Eigen::VectorXd err = pinocchio::log6(iMd).toVector(); 
-        
-        if (err.norm() < eps) {
-            success = true;
-            break;
-        }
-
-        J.setZero();
-        pinocchio::computeFrameJacobian(model, data, q, frame_id, pinocchio::LOCAL, J);
-        
-        Eigen::MatrixXd JJt = J * J.transpose();
-        Eigen::MatrixXd I = Eigen::MatrixXd::Identity(6, 6);
-        Eigen::VectorXd dq = J.transpose() * (JJt + lambda * lambda * I).inverse() * err;
-        
-        q = pinocchio::integrate(model, q, dq * dt);
-    }
-    
-    q_inout = q;
-    return success;
-}
-
-bool DualArmControl::SolvePositionIK_DLS(pinocchio::Model& model, pinocchio::Data& data, const pinocchio::FrameIndex frame_id, const Eigen::Vector3d& target_position, const std::vector<int>& active_indices, Eigen::VectorXd& q_inout)
-{
-    const int max_iter = 150;
-    const double eps = 2e-3;
-    const double lambda = 0.03;
-    const double dt = 0.6;
-
-    Eigen::VectorXd q = q_inout;
-    Eigen::MatrixXd J_full(6, model.nv);
-    Eigen::MatrixXd J_pos(3, active_indices.size());
-    bool success = false;
-
-    for (int it = 0; it < max_iter; ++it) {
-        pinocchio::forwardKinematics(model, data, q);
+    for (int iter = 0; iter < maxIter; ++iter)
+    {
+        // 현재 q로 자코비안 + FK
+        pinocchio::computeJointJacobians(model, data, q);
         pinocchio::updateFramePlacements(model, data);
 
-        Eigen::Vector3d err = target_position - data.oMf[frame_id].translation();
-        if (err.norm() < eps) {
-            success = true;
-            break;
+        Vector3d xL = data.oMf[l_EE].translation();
+        Vector3d xR = data.oMf[r_EE].translation();
+
+        Vector3d eL = target_L - xL;
+        Vector3d eR = target_R - xR;
+
+        if (std::max(eL.norm(), eR.norm()) < tol) break;
+
+        pinocchio::Data::Matrix6x JL_full(6, model.nv); JL_full.setZero();
+        pinocchio::Data::Matrix6x JR_full(6, model.nv); JR_full.setZero();
+        pinocchio::getFrameJacobian(model, data, l_EE, pinocchio::LOCAL_WORLD_ALIGNED, JL_full);
+        pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR_full);
+
+        MatrixXd JL(3, 4);
+        MatrixXd JR(3, 4);
+        for (int col = 0; col < 4; ++col) {
+            JL.col(col) = JL_full.topRows<3>().col(left_arm_idx[col]);
+            JR.col(col) = JR_full.topRows<3>().col(right_arm_idx[col]);
         }
 
-        J_full.setZero();
-        pinocchio::computeFrameJacobian(model, data, q, frame_id, pinocchio::LOCAL_WORLD_ALIGNED, J_full);
-        for (size_t col = 0; col < active_indices.size(); ++col) {
-            J_pos.col(col) = J_full.topRows(3).col(active_indices[col]);
+        MatrixXd JLJt = JL * JL.transpose() + (lambda * lambda) * MatrixXd::Identity(3, 3);
+        MatrixXd JRJt = JR * JR.transpose() + (lambda * lambda) * MatrixXd::Identity(3, 3);
+        VectorXd dqL = JL.transpose() * JLJt.ldlt().solve(eL);
+        VectorXd dqR = JR.transpose() * JRJt.ldlt().solve(eR);
+
+        for (int i = 0; i < 4; ++i) {
+            q(left_arm_idx[i]) += step * dqL(i);
+            q(right_arm_idx[i]) += step * dqR(i);
         }
 
-        Eigen::Matrix3d damping = lambda * lambda * Eigen::Matrix3d::Identity();
-        Eigen::VectorXd dq_active = J_pos.transpose() * (J_pos * J_pos.transpose() + damping).inverse() * err;
-
-        Eigen::VectorXd dq = Eigen::VectorXd::Zero(model.nv);
-        for (size_t i = 0; i < active_indices.size(); ++i) {
-            dq(active_indices[i]) = dq_active(i);
+        // 팔 관절 한계만 클램핑 - waist/head는 seed 값 유지
+        for (int i = 0; i < 4; ++i) {
+            int l_idx = left_arm_idx[i];
+            int r_idx = right_arm_idx[i];
+            q(l_idx) = std::min(std::max(q(l_idx), model.lowerPositionLimit(l_idx)),
+                                model.upperPositionLimit(l_idx));
+            q(r_idx) = std::min(std::max(q(r_idx), model.lowerPositionLimit(r_idx)),
+                                model.upperPositionLimit(r_idx));
         }
 
-        q = pinocchio::integrate(model, q, dq * dt);
+        for (int i = 0; i < 3; ++i)
+            q(i) = q_seed(i);
+        for (int i = 11; i < model.nq; ++i)
+            q(i) = std::min(std::max(q(i), model.lowerPositionLimit(i)),
+                            model.upperPositionLimit(i));
     }
 
-    q_inout = q;
-    return success;
+    q_out = q;
 }
 
-void DualArmControl::ApplyArmPostureConstraint(Eigen::VectorXd& q_inout, bool is_left_arm) const
+////////////////////////////////////////////////////////////////////////////////////////////
+//------------------------------ Cartesian Line Trajectory -------------------------------//
+////////////////////////////////////////////////////////////////////////////////////////////
+// 시작 위치 → 목표 위치를 5차 시간 스케일링 s(t)∈[0,1]로 직선 보간.
+// 좌우 동일한 시간 Tf를 쓰되, 더 긴 이동거리를 기준으로 Tf를 잡는다.
+void DualArmControl::CartesianLineTrajectory(const Vector3d& startL, const Vector3d& goalL,
+                                             const Vector3d& startR, const Vector3d& goalR,
+                                             MatrixXd& pos_out, MatrixXd& vel_out, MatrixXd& acc_out,
+                                             double v_des)
 {
-    const int shoulder_pitch_index = is_left_arm ? 3 : 7;
-    const int shoulder_roll_index = is_left_arm ? 4 : 8;
-    const int shoulder_yaw_index = is_left_arm ? 5 : 9;
-    const int elbow_index = is_left_arm ? 6 : 10;
+    Vector3d vecL = goalL - startL;
+    Vector3d vecR = goalR - startR;
+    double distL = vecL.norm();
+    double distR = vecR.norm();
+    double maxDist = std::max(distL, distR);
 
-    // Keep the arm in a human-like bending branch. In this model, positive elbow
-    // flexion tends to produce the elbow-up solution during position-only IK.
-    q_inout(elbow_index) = std::min(q_inout(elbow_index), 0.0);
+    double Tf = maxDist / v_des;
+    if (Tf < 1e-6) Tf = 1.0;
 
-    // Light shoulder bounds keep the solver from rolling/yawing excessively to
-    // compensate after the elbow branch is clamped.
-    q_inout(shoulder_pitch_index) = std::max(-1.35, std::min(0.35, q_inout(shoulder_pitch_index)));
-    q_inout(shoulder_roll_index) = std::max(-0.65, std::min(0.65, q_inout(shoulder_roll_index)));
-    q_inout(shoulder_yaw_index) = std::max(-0.75, std::min(0.75, q_inout(shoulder_yaw_index)));
+    int step = std::round(Tf / SAMPLING_TIME_TRAJ);
+    if (step < 1) step = 1;
+    pos_out.resize(step, 6);
+    vel_out.resize(step, 6);
+    acc_out.resize(step, 6);
+
+    for (int j = 0; j < step; ++j)
+    {
+        double t = j * SAMPLING_TIME_TRAJ;
+        double tau = t / Tf;
+
+        double s   = 10*pow(tau,3) - 15*pow(tau,4) + 6*pow(tau,5);
+        double ds  = 30*pow(tau,2) - 60*pow(tau,3) + 30*pow(tau,4);   // ds/dtau
+        double dds = 60*tau - 180*pow(tau,2) + 120*pow(tau,3);        // d^2s/dtau^2
+
+        double sdot  = ds  / Tf;       
+        double sddot = dds / (Tf*Tf);   
+
+        Vector3d pL = startL + s * vecL;
+        Vector3d pR = startR + s * vecR;
+        Vector3d vL = sdot * vecL;
+        Vector3d vR = sdot * vecR;
+        Vector3d aL = sddot * vecL;
+        Vector3d aR = sddot * vecR;
+
+        pos_out(j,0)=pL.x(); pos_out(j,1)=pL.y(); pos_out(j,2)=pL.z();
+        pos_out(j,3)=pR.x(); pos_out(j,4)=pR.y(); pos_out(j,5)=pR.z();
+
+        vel_out(j,0)=vL.x(); vel_out(j,1)=vL.y(); vel_out(j,2)=vL.z();
+        vel_out(j,3)=vR.x(); vel_out(j,4)=vR.y(); vel_out(j,5)=vR.z();
+
+        acc_out(j,0)=aL.x(); acc_out(j,1)=aL.y(); acc_out(j,2)=aL.z();
+        acc_out(j,3)=aR.x(); acc_out(j,4)=aR.y(); acc_out(j,5)=aR.z();
+    }
+}
+
+MatrixXd DualArmControl::DampedPinv(const MatrixXd& J, double lambda)
+{
+    MatrixXd JJt = J * J.transpose();
+    MatrixXd I = MatrixXd::Identity(JJt.rows(), JJt.cols());
+    return J.transpose() * (JJt + lambda*lambda*I).inverse();
 }
