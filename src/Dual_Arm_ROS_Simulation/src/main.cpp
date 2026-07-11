@@ -79,12 +79,18 @@ std::vector<Vector3d> scan_match_buf;  // 연속 프레임 일치 판정용 버�
 double scan_q[DoF] = {0,};             // 스캔 진행 중 "현재 명령 관절각" (head만 갱신, 나머지는 스캔 시작 시점 값 유지)
 
 const double HEAD_SCAN_YAW            = 0.0;
-const double HEAD_SCAN_PITCH          = 0.5236;  // P0 진단 결과: pitch +방향이 물체를 내려다보는 방향
+const double HEAD_SCAN_PITCH_CANDIDATES[] = {
+    0.5236,  // 30 deg
+    0.7854,  // 45 deg
+    1.0472   // 60 deg
+};
+const int    HEAD_SCAN_PITCH_COUNT    = sizeof(HEAD_SCAN_PITCH_CANDIDATES) / sizeof(HEAD_SCAN_PITCH_CANDIDATES[0]);
 const int    SCAN_SETTLE_TICKS        = 500;     // 0.5s @ 1000Hz - 정지 후 카메라/인식 안정화 대기
 const int    SCAN_CHECK_TIMEOUT_TICKS = 4000;    // 4s - 이 안에 3프레임 일치를 못 찾으면 실패 처리
                                                   // (실측: aruco_ros 인식 속도가 ~1.5~2Hz에 간헐적으로 최대 ~1s 갭이 있음)
 const int    SCAN_MATCH_FRAMES        = 3;       // 연속 일치 판정에 필요한 프레임 수
 const double SCAN_MATCH_TOL           = 0.01;    // [m] 연속 프레임 간 허용 오차
+int scan_pitch_index = 0;
 
 const double STARTUP_WAIST = 0.0;
 const double STARTUP_HEAD_YAW = 0.0;
@@ -408,6 +414,18 @@ int main(int argc, char **argv)
         scan_step = SCAN_MOVE;
     };
 
+    auto advanceScanPose = [&]() {
+        scan_pitch_index++;
+        if (scan_pitch_index >= HEAD_SCAN_PITCH_COUNT) {
+            return false;
+        }
+
+        const double next_pitch = HEAD_SCAN_PITCH_CANDIDATES[scan_pitch_index];
+        ROS_INFO("Head scan: retrying with deeper pitch %.1fdeg.", next_pitch * rad2deg);
+        startScanMoveTo(HEAD_SCAN_YAW, next_pitch);
+        return true;
+    };
+
     auto buildFixedDurationJointTrajectory = [&](const double* q_ini, const double* q_cmd, double duration_sec) {
         int step = std::max(2, static_cast<int>(std::round(duration_sec / SAMPLING_TIME_TRAJ)));
         dual_arm_jointp_trajectory.resize(step, DoF);
@@ -633,7 +651,8 @@ int main(int argc, char **argv)
 
             if ((int)scan_match_buf.size() >= SCAN_MATCH_FRAMES) {
                 ROS_INFO("Head scan: marker confirmed (yaw=%.1fdeg, pitch=%.1fdeg)",
-                         HEAD_SCAN_YAW * rad2deg, HEAD_SCAN_PITCH * rad2deg);
+                         HEAD_SCAN_YAW * rad2deg,
+                         HEAD_SCAN_PITCH_CANDIDATES[scan_pitch_index] * rad2deg);
                 scan_active = false;
                 if (!buildGraspPipelineFromDetection(scan_q)) {
                     task_phase = PHASE_APPROACH;   // TF 실패 -> 실패 처리, 접근 단계로 리셋
@@ -643,10 +662,13 @@ int main(int argc, char **argv)
 
             scan_wait_cnt++;
             if (scan_wait_cnt >= SCAN_CHECK_TIMEOUT_TICKS) {
+                const double failed_pitch = HEAD_SCAN_PITCH_CANDIDATES[scan_pitch_index];
                 ROS_WARN("Head scan: object not found at scan pose (yaw=%.1fdeg, pitch=%.1fdeg).",
-                         HEAD_SCAN_YAW * rad2deg, HEAD_SCAN_PITCH * rad2deg);
-                scan_active = false;
-                task_phase = PHASE_APPROACH;   // 실패 처리: 접근 단계로 리셋, 마지막 자세에서 정지 유지
+                         HEAD_SCAN_YAW * rad2deg, failed_pitch * rad2deg);
+                if (!advanceScanPose()) {
+                    scan_active = false;
+                    task_phase = PHASE_APPROACH;   // 실패 처리: 접근 단계로 리셋, 마지막 자세에서 정지 유지
+                }
             }
         }
     };
@@ -880,6 +902,7 @@ int main(int argc, char **argv)
 
                 aruco_pose_received = false;
                 scan_match_buf.clear();
+                scan_pitch_index = 0;
                 for (int i = 0; i < DoF; i++) scan_q[i] = dual_arm_initp[i];
 
                 // 이번 명령의 이송 목표 위치에 표시/받침대(place_indicator)를 스폰 - 스캔/파지가
@@ -887,9 +910,10 @@ int main(int argc, char **argv)
                 spawnPlaceIndicator(Vector3d(tx, ty, tz));
 
                 ROS_INFO("Vision pick: moving head to scan pose (yaw=%.1fdeg, pitch=%.1fdeg) and checking for marker.",
-                         HEAD_SCAN_YAW * rad2deg, HEAD_SCAN_PITCH * rad2deg);
+                         HEAD_SCAN_YAW * rad2deg,
+                         HEAD_SCAN_PITCH_CANDIDATES[scan_pitch_index] * rad2deg);
 
-                startScanMoveTo(HEAD_SCAN_YAW, HEAD_SCAN_PITCH);
+                startScanMoveTo(HEAD_SCAN_YAW, HEAD_SCAN_PITCH_CANDIDATES[scan_pitch_index]);
                 scan_active = true;
             }
 

@@ -203,6 +203,24 @@
         <mesh filename="package://dual_arm/meshes/L_EE.STL"/>
       </geometry>
     </collision>
+    <visual name="L_EE_grip_pad_visual">
+      <origin rpy="0 0 0" xyz="0 -0.0375 -0.005"/>
+      <geometry>
+        <box size="0.04 0.01 0.04"/>
+      </geometry>
+      <material name="grip_pad_visual_dark">
+        <color rgba="0.12 0.12 0.12 1"/>
+      </material>
+    </visual>
+    <visual name="L_EE_grip_lip_visual">
+      <origin rpy="0 0 0" xyz="-0.025 -0.0475 -0.005"/>
+      <geometry>
+        <box size="0.01 0.01 0.04"/>
+      </geometry>
+      <material name="grip_pad_visual_dark">
+        <color rgba="0.12 0.12 0.12 1"/>
+      </material>
+    </visual>
   </link>
   <joint name="L_EE_joint" type="fixed">
     <origin rpy="0 0 0" xyz="0 0 -0.3"/>
@@ -353,6 +371,24 @@
         <mesh filename="package://dual_arm/meshes/R_EE.STL"/>
       </geometry>
     </collision>
+    <visual name="R_EE_grip_pad_visual">
+      <origin rpy="0 0 0" xyz="0 0.0375 -0.005"/>
+      <geometry>
+        <box size="0.04 0.01 0.04"/>
+      </geometry>
+      <material name="grip_pad_visual_dark">
+        <color rgba="0.12 0.12 0.12 1"/>
+      </material>
+    </visual>
+    <visual name="R_EE_grip_lip_visual">
+      <origin rpy="0 0 0" xyz="-0.025 0.0475 -0.005"/>
+      <geometry>
+        <box size="0.01 0.01 0.04"/>
+      </geometry>
+      <material name="grip_pad_visual_dark">
+        <color rgba="0.12 0.12 0.12 1"/>
+      </material>
+    </visual>
   </link>
   <joint name="R_EE_joint" type="fixed">
     <origin rpy="0 0 0" xyz="0 0 -0.3"/>
@@ -405,7 +441,7 @@
     <child link="Head"/>
     <axis xyz="0 1 0"/>
     <dynamics damping="1"/>
-    <limit effort="10" lower="-0.5236" upper="0.5236" velocity="8.5"/>
+    <limit effort="10" lower="-0.5236" upper="1.0472" velocity="8.5"/>
   </joint>
 
   <link name="Head_camera_link">

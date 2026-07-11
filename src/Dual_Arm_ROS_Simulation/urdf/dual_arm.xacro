@@ -398,6 +398,17 @@
         <box size="0.04 0.01 0.04" />
       </geometry>
     </collision>
+    <visual name="L_EE_grip_pad_visual">
+      <origin
+        xyz="0 -0.0375 -0.005"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.04 0.01 0.04" />
+      </geometry>
+      <material name="grip_pad_visual_dark">
+        <color rgba="0.12 0.12 0.12 1" />
+      </material>
+    </visual>
     <!-- L자형 턱(lip): 패드는 마찰(μN)에만 의존하므로 접촉 예산 자체는 늘려주지 않는다. 물체
          아래 모서리를 기하학적으로 받칠 수 있도록 패드 아래쪽에 1cm 턱을 추가한다.
          로컬축 매핑(위 pick 자세 FK 실측): 로컬 +X가 월드 +Z(수직, dot~0.97)와 거의 나란하고
@@ -412,6 +423,17 @@
         <box size="0.01 0.01 0.04" />
       </geometry>
     </collision>
+    <visual name="L_EE_grip_lip_visual">
+      <origin
+        xyz="-0.025 -0.0475 -0.005"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.01 0.01 0.04" />
+      </geometry>
+      <material name="grip_pad_visual_dark">
+        <color rgba="0.12 0.12 0.12 1" />
+      </material>
+    </visual>
   </link>
   <joint
     name="L_EE_joint"
@@ -718,6 +740,17 @@
         <box size="0.04 0.01 0.04" />
       </geometry>
     </collision>
+    <visual name="R_EE_grip_pad_visual">
+      <origin
+        xyz="0 0.0375 -0.005"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.04 0.01 0.04" />
+      </geometry>
+      <material name="grip_pad_visual_dark">
+        <color rgba="0.12 0.12 0.12 1" />
+      </material>
+    </visual>
     <!-- L자형 턱(lip) - L_EE 쪽 설명/축 매핑 참고 (R도 로컬 +X가 월드 +Z와 dot~0.97로 거의
          나란함). 패드 바닥(로컬 x=-0.02) 아래, 패드 바깥면(로컬 y=0.0425)보다 1cm 더 뻗어나가게
          배치. -->
@@ -729,6 +762,17 @@
         <box size="0.01 0.01 0.04" />
       </geometry>
     </collision>
+    <visual name="R_EE_grip_lip_visual">
+      <origin
+        xyz="-0.025 0.0475 -0.005"
+        rpy="0 0 0" />
+      <geometry>
+        <box size="0.01 0.01 0.04" />
+      </geometry>
+      <material name="grip_pad_visual_dark">
+        <color rgba="0.12 0.12 0.12 1" />
+      </material>
+    </visual>
   </link>
   <joint
     name="R_EE_joint"
@@ -822,7 +866,7 @@
     <dynamics damping="1"/>
     <limit
       lower="-0.5236"
-      upper="0.5236"
+      upper="1.0472"
       effort="10"
       velocity="8.5" />
   </joint>
