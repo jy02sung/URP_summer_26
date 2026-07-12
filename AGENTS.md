@@ -63,3 +63,14 @@ Implement and debug humanoid upper-body control so the robot:
   head pitch reached about +0.697 rad while waist, arms, and head yaw stayed near zero during head-only motion.
   ArUco marker became visible in the head camera and `/aruco_single/pose` published in `world` near x=0.36, z=0.95 after adding the optical frame.
   Arm approach entered squeeze phase, but contact sensors stayed empty; lift/place was not fully validated because arm IK/tracking still did not bring both end effectors onto the cube reliably.
+
+## Work Log - 2026-07-13
+
+- Removed the fingertip lip geometry from `dual_arm.xacro`, keeping only the flat grip pads on both end effectors.
+- Replaced the previous impedance-style grasp compliance block with an admittance controller:
+  filtered F/T force is now integrated into Cartesian compliance position/velocity offsets,
+  then mapped through arm-only Jacobian columns into left/right arm joint target offsets.
+- Kept waist and head out of the compliance mapping so contact response only moves the arm joints.
+- Reworked the main loop so nominal trajectory acceleration is built first, then the final joint target
+  after admittance correction is passed through PD + RNEA.
+- Rebuilt with `catkin_make` after the control changes.

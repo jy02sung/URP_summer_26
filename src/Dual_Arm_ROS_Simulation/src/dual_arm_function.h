@@ -110,12 +110,12 @@ VectorXd dynamic_torque = VectorXd::Zero(DoF);
 double target_torque[DoF] = {0, };
 
 ////////////////////////////////////////////////////////////////////////////////////////////
-//------------------------------------- Impedance Control ---------------------------------//
+//------------------------------------- Admittance Control --------------------------------//
 ////////////////////////////////////////////////////////////////////////////////////////////
-// 작업 단계: 스캔 / 접근 / 파지~내려놓기 / 복귀. 파지~내려놓기 구간에서만 임피던스 활성화.
+// 작업 단계: 스캔 / 접근 / 파지~내려놓기 / 복귀. 파지~내려놓기 구간에서만 어드미턴스 활성화.
 // vision pick(command_mode==3) 실행 시 main.cpp가 세그먼트별로 dual_arm_phase_trajectory에
 // 태깅해서 재생 중 자동으로 전환한다. 그 외 모드(0/1/2) 또는 idle 상태에서는
-// /dual_arm/TaskPhase(std_msgs/Int32) 구독으로 수동 오버라이드 가능 (기본값: 접근, 임피던스 OFF).
+// /dual_arm/TaskPhase(std_msgs/Int32) 구독으로 수동 오버라이드 가능 (기본값: 접근, 어드미턴스 OFF).
 // PHASE_SCAN(3)은 Head 자동 스캔 중에만 내부적으로 쓰이며 수동 오버라이드 대상이 아니다
 // (msgCallbackTaskPhase의 범위 체크가 PHASE_APPROACH~PHASE_RETURN까지만 허용).
 enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2, PHASE_SCAN = 3 };
@@ -125,23 +125,30 @@ int task_phase = PHASE_APPROACH;
 Vector3d left_ft_force  = Vector3d::Zero();
 Vector3d right_ft_force = Vector3d::Zero();
 
-// F/T 로우패스 필터 상태 (임피던스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp 임피던스 블록에서 갱신)
+// F/T 로우패스 필터 상태 (어드미턴스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp에서 갱신)
 Vector3d left_ft_force_lpf     = Vector3d::Zero();
 Vector3d right_ft_force_lpf    = Vector3d::Zero();
 Vector3d left_ft_force_before  = Vector3d::Zero();
 Vector3d right_ft_force_before = Vector3d::Zero();
 const double FT_LPF_CUTOFF_HZ  = 10.0;  // 컷오프 주파수 [Hz]
 
-// 가상 스프링-댐퍼-질량 파라미터 (튜닝용): Md*e_ddot + Bd*e_dot + Kd*e = F_ext,  e = x_actual - x_desired
-double Md_left[3]      = { 2.0, 2.0, 2.0 };      // 가상 질량 [kg]
-double Bd_left[3]      = { 65.0, 65.0, 65.0 };   // 가상 댐핑 [N·s/m] (Kd_imp 상향에 맞춰 임계감쇠 근처로 재조정)
-double Kd_imp_left[3]  = { 500.0, 500.0, 500.0 };// 가상 강성 [N/m] (기존 300 -> 관성부하 마진 확보 위해 상향)
+// 가상 스프링-댐퍼-질량 파라미터 (튜닝용): Ma*x_ddot + Da*x_dot + Ka*x = F_ext.
+// x는 nominal grasp trajectory 위에 덧붙이는 Cartesian compliance offset이다.
+double Ma_left[3]      = { 2.0, 2.0, 2.0 };       // 가상 질량 [kg]
+double Da_left[3]      = { 65.0, 65.0, 65.0 };    // 가상 댐핑 [N·s/m]
+double Ka_left[3]      = { 500.0, 500.0, 500.0 }; // 가상 강성 [N/m]
 
-double Md_right[3]     = { 2.0, 2.0, 2.0 };
-double Bd_right[3]     = { 65.0, 65.0, 65.0 };
-double Kd_imp_right[3] = { 500.0, 500.0, 500.0 };
+double Ma_right[3]     = { 2.0, 2.0, 2.0 };
+double Da_right[3]     = { 65.0, 65.0, 65.0 };
+double Ka_right[3]     = { 500.0, 500.0, 500.0 };
 
-const double IMPEDANCE_DLS_LAMBDA = 0.05;  // Cartesian 가속도 -> 관절 가속도 변환용 댐핑 의사역행렬 계수
+Vector3d left_adm_pos  = Vector3d::Zero();
+Vector3d left_adm_vel  = Vector3d::Zero();
+Vector3d right_adm_pos = Vector3d::Zero();
+Vector3d right_adm_vel = Vector3d::Zero();
+const double ADMITTANCE_DLS_LAMBDA = 0.05;   // Cartesian offset -> arm joint offset 변환용
+const double ADMITTANCE_POS_LIMIT  = 0.05;   // 축별 최대 순응 변위 [m]
+const double ADMITTANCE_VEL_LIMIT  = 0.25;   // 축별 최대 순응 속도 [m/s]
 
 
 

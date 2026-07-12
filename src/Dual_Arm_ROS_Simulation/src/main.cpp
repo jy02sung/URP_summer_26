@@ -4,7 +4,6 @@
 #include <vector>
 #include <gazebo_msgs/SpawnModel.h>
 #include <gazebo_msgs/DeleteModel.h>
-#include <gazebo_msgs/SetModelState.h>
 #include <gazebo_msgs/ModelState.h>
 
 // place 목표 지점(이송 목표)을 눈으로 확인할 수 있도록 vision pick 명령이 들어올 때마다 스폰하는
@@ -54,7 +53,6 @@ bool waist_state_received = false;
 bool head_state_received = false;
 bool left_arm_state_received = false;
 bool right_arm_state_received = false;
-bool virtual_grasp_active = false;
 
 void msgCallbackArucoPose(const geometry_msgs::PoseStamped::ConstPtr& msg)
 {
@@ -173,7 +171,7 @@ void msgCallbackRightArmJointState(const sensor_msgs::JointState::ConstPtr& msg)
         right_arm_torque[3] = msg->effort[6];
     }
 
-// F/T 센서 콜백 (임피던스 제어의 F_ext로 사용)
+// F/T 센서 콜백 (어드미턴스 제어의 F_ext로 사용)
 void msgCallbackLeftFTSensor(const geometry_msgs::WrenchStamped::ConstPtr& msg)
 {
     left_ft_force(0) = msg->wrench.force.x;
@@ -282,8 +280,6 @@ int main(int argc, char **argv)
     // place 목표 지점 표시/받침대용 스폰-삭제 서비스 클라이언트
     ros::ServiceClient spawn_model_client = nh.serviceClient<gazebo_msgs::SpawnModel>("/gazebo/spawn_sdf_model");
     ros::ServiceClient delete_model_client = nh.serviceClient<gazebo_msgs::DeleteModel>("/gazebo/delete_model");
-    ros::ServiceClient set_model_state_client = nh.serviceClient<gazebo_msgs::SetModelState>("/gazebo/set_model_state");
-
     // vision pick 명령이 들어올 때마다 이송 목표(target) 위치에 place_indicator를 새로 스폰.
     // 이전 실행에서 남아있을 수 있으므로 스폰 전에 항상 delete부터 시도한다(없으면 실패해도 무해).
     auto spawnPlaceIndicator = [&](const Vector3d& target) {
@@ -300,40 +296,6 @@ int main(int argc, char **argv)
         spawn_srv.request.initial_pose.position.z = target.z();
         spawn_srv.request.initial_pose.orientation.w = 1.0;
         spawn_model_client.call(spawn_srv);
-    };
-
-    auto updateGraspedObjectPose = [&](const Vector3d& xL, const Vector3d& xR) {
-        gazebo_msgs::SetModelState set_state_srv;
-        set_state_srv.request.model_state.model_name = "aruco_box_26";
-        set_state_srv.request.model_state.reference_frame = "world";
-        set_state_srv.request.model_state.pose.position.x = 0.5 * (xL.x() + xR.x());
-        set_state_srv.request.model_state.pose.position.y = 0.5 * (xL.y() + xR.y());
-        set_state_srv.request.model_state.pose.position.z = 0.5 * (xL.z() + xR.z());
-        set_state_srv.request.model_state.pose.orientation.w = 1.0;
-        set_state_srv.request.model_state.twist.linear.x = 0.0;
-        set_state_srv.request.model_state.twist.linear.y = 0.0;
-        set_state_srv.request.model_state.twist.linear.z = 0.0;
-        set_state_srv.request.model_state.twist.angular.x = 0.0;
-        set_state_srv.request.model_state.twist.angular.y = 0.0;
-        set_state_srv.request.model_state.twist.angular.z = 0.0;
-        set_model_state_client.call(set_state_srv);
-    };
-
-    auto placeObjectAt = [&](const Vector3d& p) {
-        gazebo_msgs::SetModelState set_state_srv;
-        set_state_srv.request.model_state.model_name = "aruco_box_26";
-        set_state_srv.request.model_state.reference_frame = "world";
-        set_state_srv.request.model_state.pose.position.x = p.x();
-        set_state_srv.request.model_state.pose.position.y = p.y();
-        set_state_srv.request.model_state.pose.position.z = p.z();
-        set_state_srv.request.model_state.pose.orientation.w = 1.0;
-        set_state_srv.request.model_state.twist.linear.x = 0.0;
-        set_state_srv.request.model_state.twist.linear.y = 0.0;
-        set_state_srv.request.model_state.twist.linear.z = 0.0;
-        set_state_srv.request.model_state.twist.angular.x = 0.0;
-        set_state_srv.request.model_state.twist.angular.y = 0.0;
-        set_state_srv.request.model_state.twist.angular.z = 0.0;
-        set_model_state_client.call(set_state_srv);
     };
 
     ros::Rate loop_rate(1000);
@@ -586,7 +548,7 @@ int main(int argc, char **argv)
         const double APPROACH_CONTACT_V_DES = 0.03;
         addCartesianSegment(standoffL, objL, standoffR, objR, PHASE_APPROACH, APPROACH_CONTACT_V_DES);
 
-        // 2) 파지 위치에서 수직으로 들어올리기. 이 구간부터 PHASE_GRASP_TO_PLACE로 태깅되어 임피던스
+        // 2) 파지 위치에서 수직으로 들어올리기. 이 구간부터 PHASE_GRASP_TO_PLACE로 태깅되어 어드미턴스
         //    제어가 켜지고, 양팔 스퀴즈(grasp_offset) 마찰로 물체를 실제로 붙잡아 든다.
         addCartesianSegment(objL, liftL, objR, liftR, PHASE_GRASP_TO_PLACE);
 
@@ -788,8 +750,7 @@ int main(int argc, char **argv)
                 ROS_INFO("Startup: ready pose reached, enabling normal command processing.");
             }
         }
-
-
+        VectorXd nominal_joint_acc_vec = VectorXd::Zero(DoF);
 
         if(startup_state == STARTUP_COMPLETE && callback == true){
             bool new_trajectory_built = true;  // command_mode==3이 실패하면 false로 바뀌어 기존 궤적 재생을 유지
@@ -808,7 +769,7 @@ int main(int argc, char **argv)
             if (command_mode == 0) {
                 dualarm.JointTrajectoryQuintic(dual_arm_initp, dual_arm_commandp,
                     dual_arm_jointp_trajectory, dual_arm_jointv_trajectory, dual_arm_jointa_trajectory);
-                // 수동 modeling 명령은 임피던스 대상이 아님 -> 전 구간 접근 단계로 태깅
+                // 수동 modeling 명령은 어드미턴스 대상이 아님 -> 전 구간 접근 단계로 태깅
                 dual_arm_phase_trajectory.setConstant(dual_arm_jointp_trajectory.rows(), PHASE_APPROACH);
             }
 
@@ -823,7 +784,7 @@ int main(int argc, char **argv)
 
                 dualarm.JointTrajectoryQuintic(dual_arm_initp, dual_arm_commandp,
                     dual_arm_jointp_trajectory, dual_arm_jointv_trajectory, dual_arm_jointa_trajectory);
-                // 수동 joint sim 명령은 임피던스 대상이 아님 -> 전 구간 접근 단계로 태깅
+                // 수동 joint sim 명령은 어드미턴스 대상이 아님 -> 전 구간 접근 단계로 태깅
                 dual_arm_phase_trajectory.setConstant(dual_arm_jointp_trajectory.rows(), PHASE_APPROACH);
             }
 
@@ -889,7 +850,7 @@ int main(int argc, char **argv)
                     }
                 }
 
-                // 수동 cartesian sim 명령은 임피던스 대상이 아님 -> 전 구간 접근 단계로 태깅
+                // 수동 cartesian sim 명령은 어드미턴스 대상이 아님 -> 전 구간 접근 단계로 태깅
                 dual_arm_phase_trajectory.setConstant(steps, PHASE_APPROACH);
             }
 
@@ -930,14 +891,12 @@ int main(int argc, char **argv)
             for (int i = 0; i < DoF; i++){
                 dual_arm_targetv[i] = dual_arm_jointv_trajectory(traj_cnt, i);
             }
-            dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
-
             for (int i = 0; i < DoF; i++){
-                dual_arm_targeta_vec(i) = dual_arm_jointa_trajectory(traj_cnt, i) + PD_acc[i];
+                nominal_joint_acc_vec(i) = dual_arm_jointa_trajectory(traj_cnt, i);
             }
 
             // vision pick(mode 3) 재생 중이면 현재 행에 태깅된 phase로 자동 전환.
-            // (mode 0/1/2는 전 구간 PHASE_APPROACH로 태깅되어 있어 임피던스가 자동으로 켜지지 않음)
+            // (mode 0/1/2는 전 구간 PHASE_APPROACH로 태깅되어 있어 어드미턴스가 자동으로 켜지지 않음)
             if (traj_cnt < dual_arm_phase_trajectory.size()) {
                 task_phase = dual_arm_phase_trajectory(traj_cnt);
             }
@@ -949,14 +908,6 @@ int main(int argc, char **argv)
             for (int i = 0; i < DoF; i++) {
                 dual_arm_targetp[i] = dual_arm_jointp_trajectory.bottomRows(1)(0, i);
                 dual_arm_targetv[i] = 0.0;  // 정지 목표
-                dual_arm_targeta_vec(i) = 0.0;
-            }
-
-            // PD 제어로 자세 유지
-            dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
-
-            for (int i = 0; i < DoF; i++) {
-                dual_arm_targeta_vec(i) = PD_acc[i];
             }
 
             if (scan_active) {
@@ -970,7 +921,7 @@ int main(int argc, char **argv)
                 // 궤적(복귀 포함) 실행이 막 끝난 시점: 접근 단계로 리셋 + 완료 알림, 딱 한 번만
                 // (스캔 실패로 여기 들어온 경우도 포함 - runScanStep()이 scan_active를 false로 내리고
                 //  task_phase를 PHASE_APPROACH로 리셋한 뒤 다음 tick에 이 분기로 자연스럽게 넘어온다)
-                task_phase = PHASE_APPROACH;   // 복귀 완료 -> 접근 단계로 리셋 (임피던스 OFF)
+                task_phase = PHASE_APPROACH;   // 복귀 완료 -> 접근 단계로 리셋 (어드미턴스 OFF)
 
                 std_msgs::Bool traj_done_msg;
                 traj_done_msg.data = true;
@@ -981,9 +932,6 @@ int main(int argc, char **argv)
 
         // TaskPhase 값이 바뀐 순간에만 발행 (외부에서 전환 시점을 관측 가능)
         if (task_phase != prev_task_phase) {
-            if (prev_task_phase == PHASE_GRASP_TO_PLACE && task_phase == PHASE_RETURN) {
-                placeObjectAt(Vector3d(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]));
-            }
             std_msgs::Int32 phase_msg;
             phase_msg.data = task_phase;
             task_phase_pub.publish(phase_msg);
@@ -993,16 +941,16 @@ int main(int argc, char **argv)
         for (int i = 0; i < DoF; ++i) {
             dual_arm_targetp_vec(i) = dual_arm_targetp[i];
         }
+        VectorXd dual_arm_targetv_vec = VectorXd::Zero(DoF);
+        for (int i = 0; i < DoF; ++i) {
+            dual_arm_targetv_vec(i) = dual_arm_targetv[i];
+        }
 
-        // ===== 임피던스 제어 (파지~내려놓기 구간에서만 활성화, 그 외에는 기존 PD+RNEA만) =====
-        // Md*e_ddot + Bd*e_dot + Kd*e = F_ext  (e = 실제 EE 위치 - 목표 EE 위치, world frame, 위치 3축만)
-        // 여기서 얻은 e_ddot(가상 응답 가속도)를 댐핑 의사역행렬로 관절가속도로 변환해
-        // dual_arm_targeta_vec 에 더해준다. -> RNEA가 M(q)*a 항을 통해 자동으로 추가 토크로 반영.
-        bool impedance_active = (task_phase == PHASE_GRASP_TO_PLACE);
-        bool placement_hold_active = (task_phase == PHASE_RETURN && command_mode == 3);
-        static int grasp_pose_update_decim = 0;
-        static int place_pose_update_decim = 0;
-        if (impedance_active) {
+        // ===== 어드미턴스 제어 (파지~내려놓기 구간에서만 활성화) =====
+        // Ma*x_ddot + Da*x_dot + Ka*x = F_ext 를 적분해 Cartesian compliance offset을 만들고,
+        // 그 오프셋을 arm-only Jacobian으로 관절 목표 위치/속도에 반영한다.
+        bool admittance_active = (task_phase == PHASE_GRASP_TO_PLACE);
+        if (admittance_active) {
             // 실제 관절 상태에서의 FK/자코비안
             pinocchio::computeJointJacobians(model, data, dual_arm_jointp_vec);
             pinocchio::updateFramePlacements(model, data);
@@ -1018,28 +966,17 @@ int main(int argc, char **argv)
             pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR_full);
             MatrixXd JL = JL_full.topRows<3>();   // 위치 3행만 (DoF 열)
             MatrixXd JR = JR_full.topRows<3>();
+            MatrixXd JL_arm(3, 4);
+            MatrixXd JR_arm(3, 4);
+            for (int c = 0; c < 4; ++c) {
+                JL_arm.col(c) = JL.col(c + 3);
+                JR_arm.col(c) = JR.col(c + 7);
+            }
 
-            Vector3d xL_dot_actual = JL * dual_arm_jointv_vec;
-            Vector3d xR_dot_actual = JR * dual_arm_jointv_vec;
-
-            // 목표(지령) EE 위치/속도 (target 궤적 기준 FK, 같은 자코비안으로 근사)
+            // nominal target EE 위치 (target 궤적 기준 FK)
             pinocchio::forwardKinematics(model, data, dual_arm_targetp_vec);
             pinocchio::updateFramePlacements(model, data);
-            Vector3d xL_d = data.oMf[l_EE].translation();
-            Vector3d xR_d = data.oMf[r_EE].translation();
-
-            VectorXd targetv_vec(DoF);
-            for (int i = 0; i < DoF; i++) targetv_vec(i) = dual_arm_targetv[i];
-            Vector3d xL_d_dot = JL * targetv_vec;
-            Vector3d xR_d_dot = JR * targetv_vec;
-
-            Vector3d eL = xL_actual - xL_d;
-            Vector3d eR = xR_actual - xR_d;
-            Vector3d eL_dot = xL_dot_actual - xL_d_dot;
-            Vector3d eR_dot = xR_dot_actual - xR_d_dot;
-
-            // F/T 원시값은 접촉 순간 노이즈가 커서(수십 N 단위로 수 ms만에 요동) 그대로 쓰면 임피던스
-            // 가속도(eL_ddot)에 그대로 증폭 반영되어 스퀴즈 접촉이 떨린다(chatter) - 로우패스로 완화.
+            // F/T 원시값은 접촉 순간 노이즈가 커서 그대로 적분하면 순응 상태가 요동하므로 로우패스로 완화.
             for (int k = 0; k < 3; k++) {
                 left_ft_force_lpf(k)  = dualarm.LowPassFilter(left_ft_force(k),  left_ft_force_before(k),  FT_LPF_CUTOFF_HZ);
                 right_ft_force_lpf(k) = dualarm.LowPassFilter(right_ft_force(k), right_ft_force_before(k), FT_LPF_CUTOFF_HZ);
@@ -1051,40 +988,53 @@ int main(int argc, char **argv)
             Vector3d F_ext_L = RL_actual * left_ft_force_lpf;
             Vector3d F_ext_R = RR_actual * right_ft_force_lpf;
 
-            Vector3d eL_ddot, eR_ddot;
+            Vector3d xL_adm_ddot = Vector3d::Zero();
+            Vector3d xR_adm_ddot = Vector3d::Zero();
             for (int k = 0; k < 3; k++) {
-                eL_ddot(k) = (F_ext_L(k) - Bd_left[k]*eL_dot(k) - Kd_imp_left[k]*eL(k)) / Md_left[k];
-                eR_ddot(k) = (F_ext_R(k) - Bd_right[k]*eR_dot(k) - Kd_imp_right[k]*eR(k)) / Md_right[k];
+                xL_adm_ddot(k) = (F_ext_L(k) - Da_left[k] * left_adm_vel(k) - Ka_left[k] * left_adm_pos(k)) / Ma_left[k];
+                xR_adm_ddot(k) = (F_ext_R(k) - Da_right[k] * right_adm_vel(k) - Ka_right[k] * right_adm_pos(k)) / Ma_right[k];
+
+                left_adm_vel(k) += xL_adm_ddot(k) * SAMPLING_TIME;
+                right_adm_vel(k) += xR_adm_ddot(k) * SAMPLING_TIME;
+
+                left_adm_vel(k) = std::max(-ADMITTANCE_VEL_LIMIT, std::min(ADMITTANCE_VEL_LIMIT, left_adm_vel(k)));
+                right_adm_vel(k) = std::max(-ADMITTANCE_VEL_LIMIT, std::min(ADMITTANCE_VEL_LIMIT, right_adm_vel(k)));
+
+                left_adm_pos(k) += left_adm_vel(k) * SAMPLING_TIME;
+                right_adm_pos(k) += right_adm_vel(k) * SAMPLING_TIME;
+
+                left_adm_pos(k) = std::max(-ADMITTANCE_POS_LIMIT, std::min(ADMITTANCE_POS_LIMIT, left_adm_pos(k)));
+                right_adm_pos(k) = std::max(-ADMITTANCE_POS_LIMIT, std::min(ADMITTANCE_POS_LIMIT, right_adm_pos(k)));
             }
 
-            VectorXd dq_ddot_L = dualarm.DampedPinv(JL, IMPEDANCE_DLS_LAMBDA) * eL_ddot;
-            VectorXd dq_ddot_R = dualarm.DampedPinv(JR, IMPEDANCE_DLS_LAMBDA) * eR_ddot;
+            VectorXd dq_adm_L = dualarm.DampedPinv(JL_arm, ADMITTANCE_DLS_LAMBDA) * left_adm_pos;
+            VectorXd dq_adm_R = dualarm.DampedPinv(JR_arm, ADMITTANCE_DLS_LAMBDA) * right_adm_pos;
+            VectorXd dq_adm_dot_L = dualarm.DampedPinv(JL_arm, ADMITTANCE_DLS_LAMBDA) * left_adm_vel;
+            VectorXd dq_adm_dot_R = dualarm.DampedPinv(JR_arm, ADMITTANCE_DLS_LAMBDA) * right_adm_vel;
 
-            dual_arm_targeta_vec += dq_ddot_L + dq_ddot_R;
-
-            // 물리 마찰 파지의 불안정성이 남아 있어 grasp-to-place 동안에는 큐브를 양 손끝 중앙에
-            // 붙여서 이송을 보장한다. RETURN으로 넘어가면 이 훅을 끊어 place_pedestal 위에 놓이게 한다.
-            virtual_grasp_active = true;
-            grasp_pose_update_decim++;
-            if (grasp_pose_update_decim >= 10) {  // 100 Hz
-                updateGraspedObjectPose(xL_actual, xR_actual);
-                grasp_pose_update_decim = 0;
+            for (int i = 0; i < 4; ++i) {
+                dual_arm_targetp_vec(i + 3) += dq_adm_L(i);
+                dual_arm_targetp_vec(i + 7) += dq_adm_R(i);
+                dual_arm_targetv_vec(i + 3) += dq_adm_dot_L(i);
+                dual_arm_targetv_vec(i + 7) += dq_adm_dot_R(i);
             }
+
+            for (int i = 0; i < DoF; ++i) {
+                dual_arm_targetp[i] = dual_arm_targetp_vec(i);
+                dual_arm_targetv[i] = dual_arm_targetv_vec(i);
+            }
+
         }
         else {
-            grasp_pose_update_decim = 0;
-            virtual_grasp_active = false;
+            left_adm_pos.setZero();
+            left_adm_vel.setZero();
+            right_adm_pos.setZero();
+            right_adm_vel.setZero();
         }
 
-        if (placement_hold_active) {
-            place_pose_update_decim++;
-            if (place_pose_update_decim >= 10) {  // 100 Hz
-                placeObjectAt(Vector3d(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]));
-                place_pose_update_decim = 0;
-            }
-        }
-        else {
-            place_pose_update_decim = 0;
+        dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
+        for (int i = 0; i < DoF; i++) {
+            dual_arm_targeta_vec(i) = nominal_joint_acc_vec(i) + PD_acc[i];
         }
 
         // dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_jointv, PD_torque);
