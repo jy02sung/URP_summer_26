@@ -49,6 +49,14 @@ MatrixXd dual_arm_cart_acc_trajectory = MatrixXd::Zero(1,6);  // 직교 가속�
 VectorXd q_ik_seed = VectorXd::Zero(DoF);   // IK 시드
 VectorXd q_ik_result = VectorXd::Zero(DoF); // IK 결과
 
+// vision pick(mode 3) 세그먼트 빌드 시 사전 계획된 desired Cartesian trajectory(x_d, ẋ_d, ẍ_d).
+// dual_arm_jointp_trajectory와 행(row) 인덱스가 1:1로 대응 - PHASE_GRASP_TO_PLACE 구간에서
+// 어드미턴스가 매 tick 이 값을 조회한다 (그 외 구간은 채워지긴 하지만 조회되지 않음).
+// 열 순서는 dual_arm_cart_pos_trajectory와 동일 [Lx,Ly,Lz,Rx,Ry,Rz].
+MatrixXd dual_arm_cart_target_trajectory     = MatrixXd::Zero(1,6);  // x_d
+MatrixXd dual_arm_cart_target_vel_trajectory = MatrixXd::Zero(1,6);  // ẋ_d
+MatrixXd dual_arm_cart_target_acc_trajectory = MatrixXd::Zero(1,6);  // ẍ_d
+
 bool callback = false;
 int traj_cnt = 1;
 bool traj_done_published = false;   // 현재 궤적의 TrajectoryDone 발행 여부 (콜백마다 리셋)
@@ -110,12 +118,12 @@ VectorXd dynamic_torque = VectorXd::Zero(DoF);
 double target_torque[DoF] = {0, };
 
 ////////////////////////////////////////////////////////////////////////////////////////////
-//------------------------------------- Impedance Control ---------------------------------//
+//------------------------------------- Admittance Control --------------------------------//
 ////////////////////////////////////////////////////////////////////////////////////////////
-// 작업 단계: 스캔 / 접근 / 파지~내려놓기 / 복귀. 파지~내려놓기 구간에서만 임피던스 활성화.
+// 작업 단계: 스캔 / 접근 / 파지~내려놓기 / 복귀. 파지~내려놓기 구간에서만 어드미턴스 활성화.
 // vision pick(command_mode==3) 실행 시 main.cpp가 세그먼트별로 dual_arm_phase_trajectory에
 // 태깅해서 재생 중 자동으로 전환한다. 그 외 모드(0/1/2) 또는 idle 상태에서는
-// /dual_arm/TaskPhase(std_msgs/Int32) 구독으로 수동 오버라이드 가능 (기본값: 접근, 임피던스 OFF).
+// /dual_arm/TaskPhase(std_msgs/Int32) 구독으로 수동 오버라이드 가능 (기본값: 접근, 어드미턴스 OFF).
 // PHASE_SCAN(3)은 Head 자동 스캔 중에만 내부적으로 쓰이며 수동 오버라이드 대상이 아니다
 // (msgCallbackTaskPhase의 범위 체크가 PHASE_APPROACH~PHASE_RETURN까지만 허용).
 enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2, PHASE_SCAN = 3 };
@@ -125,23 +133,37 @@ int task_phase = PHASE_APPROACH;
 Vector3d left_ft_force  = Vector3d::Zero();
 Vector3d right_ft_force = Vector3d::Zero();
 
-// F/T 로우패스 필터 상태 (임피던스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp 임피던스 블록에서 갱신)
+// F/T 로우패스 필터 상태 (어드미턴스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp 어드미턴스 블록에서 갱신)
 Vector3d left_ft_force_lpf     = Vector3d::Zero();
 Vector3d right_ft_force_lpf    = Vector3d::Zero();
 Vector3d left_ft_force_before  = Vector3d::Zero();
 Vector3d right_ft_force_before = Vector3d::Zero();
 const double FT_LPF_CUTOFF_HZ  = 10.0;  // 컷오프 주파수 [Hz]
 
-// 가상 스프링-댐퍼-질량 파라미터 (튜닝용): Md*e_ddot + Bd*e_dot + Kd*e = F_ext,  e = x_actual - x_desired
-double Md_left[3]      = { 2.0, 2.0, 2.0 };      // 가상 질량 [kg]
-double Bd_left[3]      = { 65.0, 65.0, 65.0 };   // 가상 댐핑 [N·s/m] (Kd_imp 상향에 맞춰 임계감쇠 근처로 재조정)
-double Kd_imp_left[3]  = { 500.0, 500.0, 500.0 };// 가상 강성 [N/m] (기존 300 -> 관성부하 마진 확보 위해 상향)
+// 가상 질량-댐핑-강성 파라미터 (튜닝용).
+// x,y(인덱스 0,1): 위치추종 admittance - M(ẍcmd−ẍd) + D(ẋcmd−ẋd) + K(xcmd−xd) = 0
+// z(인덱스 2):     힘추종 admittance   - M·z̈cmd + D·żcmd = F_ext,z − F_d,z  (K_z=0 고정, 아래서 0으로 둠)
+double Ma_left[3] = { 2.0, 2.0, 2.0 };      // 가상 질량 [kg]
+double Da_left[3] = { 65.0, 65.0, 65.0 };   // 가상 댐핑 [N·s/m]
+double Ka_left[3] = { 500.0, 500.0, 0.0 };  // 가상 강성 [N/m] - z는 순수 힘제어라 0 고정
 
-double Md_right[3]     = { 2.0, 2.0, 2.0 };
-double Bd_right[3]     = { 65.0, 65.0, 65.0 };
-double Kd_imp_right[3] = { 500.0, 500.0, 500.0 };
+double Ma_right[3] = { 2.0, 2.0, 2.0 };
+double Da_right[3] = { 65.0, 65.0, 65.0 };
+double Ka_right[3] = { 500.0, 500.0, 0.0 };
 
-const double IMPEDANCE_DLS_LAMBDA = 0.05;  // Cartesian 가속도 -> 관절 가속도 변환용 댐핑 의사역행렬 계수
+const double ADMITTANCE_FD_Z = 10.0;  // z방향(스퀴즈) 목표 힘 F_d,z [N]
+
+// 어드미턴스 command 적분 상태 (tick 간 유지). PHASE_GRASP_TO_PLACE 진입 순간 실제 EE 위치로
+// 초기화되고(admittance_initialized), 그 밖에서는 다음 진입에 대비해 리셋된다 (main.cpp).
+Vector3d xL_cmd     = Vector3d::Zero();
+Vector3d xL_cmd_dot = Vector3d::Zero();
+Vector3d xR_cmd     = Vector3d::Zero();
+Vector3d xR_cmd_dot = Vector3d::Zero();
+bool admittance_initialized = false;
+
+// 매 tick IK 웜스타트 + 관절 속도/가속도 후진차분용 (온라인 계산이라 중심차분 대신 후진차분 사용)
+VectorXd q_cmd_prev     = VectorXd::Zero(DoF);
+VectorXd q_cmd_dot_prev = VectorXd::Zero(DoF);
 
 
 
@@ -181,8 +203,6 @@ class DualArmControl
                              MatrixXd& pos_out, MatrixXd& vel_out, MatrixXd& acc_out,
                              double v_des = 0.1);
 
-        // === 추가: 댐핑 의사역행렬 (mode 2에서 J -> J+ 변환용) ===
-        MatrixXd DampedPinv(const MatrixXd& J, double lambda);     
 
 };
 

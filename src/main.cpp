@@ -379,6 +379,7 @@ int main(int argc, char **argv)
         Vector3d liftR = objR + Vector3d(0, 0, LIFT_HEIGHT);
 
         std::vector<MatrixXd> pos_segs, vel_segs, acc_segs;
+        std::vector<MatrixXd> cart_pos_segs, cart_vel_segs, cart_acc_segs;  // 어드미턴스용 desired Cartesian(x_d,ẋ_d,ẍ_d)
         std::vector<int> seg_phase;   // 세그먼트별 TaskPhase 태그 (재생 중 자동 전환용)
         VectorXd seed_vec = base_seed;
 
@@ -391,6 +392,9 @@ int main(int argc, char **argv)
             MatrixXd cart_p, cart_v, cart_a;
             dualarm.CartesianLineTrajectory(sL, gL, sR, gR, cart_p, cart_v, cart_a, v_des);
             int steps = cart_p.rows();
+            cart_pos_segs.push_back(cart_p);
+            cart_vel_segs.push_back(cart_v);
+            cart_acc_segs.push_back(cart_a);
 
             MatrixXd jp(steps, DoF), jv(steps, DoF), ja(steps, DoF);
 
@@ -459,6 +463,9 @@ int main(int argc, char **argv)
         dual_arm_jointv_trajectory.resize(total_rows, DoF);
         dual_arm_jointa_trajectory.resize(total_rows, DoF);
         dual_arm_phase_trajectory.resize(total_rows);
+        dual_arm_cart_target_trajectory.resize(total_rows, 6);
+        dual_arm_cart_target_vel_trajectory.resize(total_rows, 6);
+        dual_arm_cart_target_acc_trajectory.resize(total_rows, 6);
         int offset = 0;
         for (size_t k = 0; k < pos_segs.size(); ++k) {
             int r = pos_segs[k].rows();
@@ -466,6 +473,9 @@ int main(int argc, char **argv)
             dual_arm_jointv_trajectory.block(offset, 0, r, DoF) = vel_segs[k];
             dual_arm_jointa_trajectory.block(offset, 0, r, DoF) = acc_segs[k];
             dual_arm_phase_trajectory.segment(offset, r).setConstant(seg_phase[k]);
+            dual_arm_cart_target_trajectory.block(offset, 0, r, 6)     = cart_pos_segs[k];
+            dual_arm_cart_target_vel_trajectory.block(offset, 0, r, 6) = cart_vel_segs[k];
+            dual_arm_cart_target_acc_trajectory.block(offset, 0, r, 6) = cart_acc_segs[k];
             offset += r;
         }
 
@@ -711,24 +721,103 @@ int main(int argc, char **argv)
             callback = false;
         }
         else if (traj_cnt < dual_arm_jointp_trajectory.rows()){
-            for (int i = 0; i < DoF; i++){
-                dual_arm_targetp[i] = dual_arm_jointp_trajectory(traj_cnt, i);
-            }
-            for (int i = 0; i < DoF; i++){
-                dual_arm_targetv[i] = dual_arm_jointv_trajectory(traj_cnt, i);
-            }
-            dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
-
-            for (int i = 0; i < DoF; i++){
-                dual_arm_targeta_vec(i) = dual_arm_jointa_trajectory(traj_cnt, i) + PD_acc[i];
-            }
-
             // vision pick(mode 3) 재생 중이면 현재 행에 태깅된 phase로 자동 전환.
-            // (mode 0/1/2는 전 구간 PHASE_APPROACH로 태깅되어 있어 임피던스가 자동으로 켜지지 않음)
-            if (traj_cnt < dual_arm_phase_trajectory.size()) {
-                task_phase = dual_arm_phase_trajectory(traj_cnt);
+            // (mode 0/1/2는 전 구간 PHASE_APPROACH로 태깅되어 있어 아래 어드미턴스 분기가 절대 안 켜짐)
+            int phase_this_tick = (traj_cnt < dual_arm_phase_trajectory.size())
+                                       ? dual_arm_phase_trajectory(traj_cnt) : task_phase;
+
+            if (phase_this_tick == PHASE_GRASP_TO_PLACE) {
+                // ===== 어드미턴스 제어 (파지~내려놓기 구간): x,y 위치추종 + z 힘추종 =====
+                // x_cmd(위치)를 매 tick 새로 계산해 IK로 q_cmd를 구하고, 그 q_cmd를 이번 tick의
+                // 목표 관절각/속도/가속도로 그대로 쓴다 (기존 임피던스처럼 토크에 더하는 방식이 아님).
+                pinocchio::forwardKinematics(model, data, dual_arm_jointp_vec);
+                pinocchio::updateFramePlacements(model, data);
+                Vector3d xL_actual = data.oMf[l_EE].translation();
+                Vector3d xR_actual = data.oMf[r_EE].translation();
+                Matrix3d RL_actual = data.oMf[l_EE].rotation();
+                Matrix3d RR_actual = data.oMf[r_EE].rotation();
+
+                // PHASE_GRASP_TO_PLACE 진입 첫 tick: 불연속 방지를 위해 실제 현재 상태로 초기화
+                if (!admittance_initialized) {
+                    xL_cmd = xL_actual;
+                    xR_cmd = xR_actual;
+                    xL_cmd_dot.setZero();
+                    xR_cmd_dot.setZero();
+                    q_cmd_prev = dual_arm_jointp_vec;
+                    q_cmd_dot_prev.setZero();
+                    admittance_initialized = true;
+                }
+
+                // 사전 계획된 desired trajectory (x_d, ẋ_d, ẍ_d) 조회
+                Vector3d xL_d(dual_arm_cart_target_trajectory(traj_cnt,0), dual_arm_cart_target_trajectory(traj_cnt,1), dual_arm_cart_target_trajectory(traj_cnt,2));
+                Vector3d xR_d(dual_arm_cart_target_trajectory(traj_cnt,3), dual_arm_cart_target_trajectory(traj_cnt,4), dual_arm_cart_target_trajectory(traj_cnt,5));
+                Vector3d xL_d_dot(dual_arm_cart_target_vel_trajectory(traj_cnt,0), dual_arm_cart_target_vel_trajectory(traj_cnt,1), dual_arm_cart_target_vel_trajectory(traj_cnt,2));
+                Vector3d xR_d_dot(dual_arm_cart_target_vel_trajectory(traj_cnt,3), dual_arm_cart_target_vel_trajectory(traj_cnt,4), dual_arm_cart_target_vel_trajectory(traj_cnt,5));
+                Vector3d xL_d_ddot(dual_arm_cart_target_acc_trajectory(traj_cnt,0), dual_arm_cart_target_acc_trajectory(traj_cnt,1), dual_arm_cart_target_acc_trajectory(traj_cnt,2));
+                Vector3d xR_d_ddot(dual_arm_cart_target_acc_trajectory(traj_cnt,3), dual_arm_cart_target_acc_trajectory(traj_cnt,4), dual_arm_cart_target_acc_trajectory(traj_cnt,5));
+
+                // F/T: 접촉 노이즈 완화 위해 기존과 동일하게 10Hz LPF 적용 후 world frame으로 변환
+                for (int k = 0; k < 3; k++) {
+                    left_ft_force_lpf(k)  = dualarm.LowPassFilter(left_ft_force(k),  left_ft_force_before(k),  FT_LPF_CUTOFF_HZ);
+                    right_ft_force_lpf(k) = dualarm.LowPassFilter(right_ft_force(k), right_ft_force_before(k), FT_LPF_CUTOFF_HZ);
+                }
+                left_ft_force_before  = left_ft_force_lpf;
+                right_ft_force_before = right_ft_force_lpf;
+                Vector3d F_ext_L = RL_actual * left_ft_force_lpf;
+                Vector3d F_ext_R = RR_actual * right_ft_force_lpf;
+
+                // x,y: 위치추종 admittance (우항 0) / z: 힘추종 admittance (K_z=0, 목표힘 ADMITTANCE_FD_Z)
+                Vector3d xL_cmd_ddot, xR_cmd_ddot;
+                for (int k = 0; k < 2; k++) {   // x, y
+                    xL_cmd_ddot(k) = xL_d_ddot(k) - (Da_left[k]*(xL_cmd_dot(k)-xL_d_dot(k))  + Ka_left[k]*(xL_cmd(k)-xL_d(k)))   / Ma_left[k];
+                    xR_cmd_ddot(k) = xR_d_ddot(k) - (Da_right[k]*(xR_cmd_dot(k)-xR_d_dot(k)) + Ka_right[k]*(xR_cmd(k)-xR_d(k))) / Ma_right[k];
+                }
+                xL_cmd_ddot(2) = (F_ext_L(2) - ADMITTANCE_FD_Z - Da_left[2]*xL_cmd_dot(2))  / Ma_left[2];
+                xR_cmd_ddot(2) = (F_ext_R(2) - ADMITTANCE_FD_Z - Da_right[2]*xR_cmd_dot(2)) / Ma_right[2];
+
+                // Euler 적분으로 command(x_cmd) 생성
+                xL_cmd_dot += xL_cmd_ddot * SAMPLING_TIME;
+                xL_cmd     += xL_cmd_dot  * SAMPLING_TIME;
+                xR_cmd_dot += xR_cmd_ddot * SAMPLING_TIME;
+                xR_cmd     += xR_cmd_dot  * SAMPLING_TIME;
+
+                // x_cmd -> IK (직전 q_cmd로 웜스타트, 매 tick 목표가 미세하게만 움직여 빠르게 수렴 예상)
+                VectorXd q_cmd(DoF);
+                dualarm.SolveIK_Position(model, data, l_EE, r_EE, xL_cmd, xR_cmd, q_cmd_prev, q_cmd);
+
+                // 관절 속도/가속도: 온라인이라 미래 샘플이 없어 후진차분 사용 (기존 코드의 중심차분과 다름)
+                VectorXd q_cmd_dot  = (q_cmd - q_cmd_prev) / SAMPLING_TIME;
+                VectorXd q_cmd_ddot = (q_cmd_dot - q_cmd_dot_prev) / SAMPLING_TIME;
+
+                for (int i = 0; i < DoF; i++) {
+                    dual_arm_targetp[i] = q_cmd(i);
+                    dual_arm_targetv[i] = q_cmd_dot(i);
+                }
+                dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
+                for (int i = 0; i < DoF; i++) {
+                    dual_arm_targeta_vec(i) = q_cmd_ddot(i) + PD_acc[i];
+                }
+
+                q_cmd_prev     = q_cmd;
+                q_cmd_dot_prev = q_cmd_dot;
+            }
+            else {
+                admittance_initialized = false;  // GRASP_TO_PLACE 밖 -> 다음 진입에 대비해 리셋
+
+                for (int i = 0; i < DoF; i++){
+                    dual_arm_targetp[i] = dual_arm_jointp_trajectory(traj_cnt, i);
+                }
+                for (int i = 0; i < DoF; i++){
+                    dual_arm_targetv[i] = dual_arm_jointv_trajectory(traj_cnt, i);
+                }
+                dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
+
+                for (int i = 0; i < DoF; i++){
+                    dual_arm_targeta_vec(i) = dual_arm_jointa_trajectory(traj_cnt, i) + PD_acc[i];
+                }
             }
 
+            task_phase = phase_this_tick;
             traj_cnt++;
         }
         else {
@@ -757,7 +846,8 @@ int main(int argc, char **argv)
                 // 궤적(복귀 포함) 실행이 막 끝난 시점: 접근 단계로 리셋 + 완료 알림, 딱 한 번만
                 // (스캔 실패로 여기 들어온 경우도 포함 - runScanStep()이 scan_active를 false로 내리고
                 //  task_phase를 PHASE_APPROACH로 리셋한 뒤 다음 tick에 이 분기로 자연스럽게 넘어온다)
-                task_phase = PHASE_APPROACH;   // 복귀 완료 -> 접근 단계로 리셋 (임피던스 OFF)
+                task_phase = PHASE_APPROACH;   // 복귀 완료 -> 접근 단계로 리셋 (어드미턴스 OFF)
+                admittance_initialized = false;  // 다음 PHASE_GRASP_TO_PLACE 진입에 대비해 리셋
 
                 std_msgs::Bool traj_done_msg;
                 traj_done_msg.data = true;
@@ -778,71 +868,9 @@ int main(int argc, char **argv)
             dual_arm_targetp_vec(i) = dual_arm_targetp[i];
         }
 
-        // ===== 임피던스 제어 (파지~내려놓기 구간에서만 활성화, 그 외에는 기존 PD+RNEA만) =====
-        // Md*e_ddot + Bd*e_dot + Kd*e = F_ext  (e = 실제 EE 위치 - 목표 EE 위치, world frame, 위치 3축만)
-        // 여기서 얻은 e_ddot(가상 응답 가속도)를 댐핑 의사역행렬로 관절가속도로 변환해
-        // dual_arm_targeta_vec 에 더해준다. -> RNEA가 M(q)*a 항을 통해 자동으로 추가 토크로 반영.
-        bool impedance_active = (task_phase == PHASE_GRASP_TO_PLACE);
-        if (impedance_active) {
-            // 실제 관절 상태에서의 FK/자코비안
-            pinocchio::computeJointJacobians(model, data, dual_arm_jointp_vec);
-            pinocchio::updateFramePlacements(model, data);
-
-            Vector3d xL_actual = data.oMf[l_EE].translation();
-            Vector3d xR_actual = data.oMf[r_EE].translation();
-            Matrix3d RL_actual = data.oMf[l_EE].rotation();
-            Matrix3d RR_actual = data.oMf[r_EE].rotation();
-
-            pinocchio::Data::Matrix6x JL_full(6, model.nv); JL_full.setZero();
-            pinocchio::Data::Matrix6x JR_full(6, model.nv); JR_full.setZero();
-            pinocchio::getFrameJacobian(model, data, l_EE, pinocchio::LOCAL_WORLD_ALIGNED, JL_full);
-            pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR_full);
-            MatrixXd JL = JL_full.topRows<3>();   // 위치 3행만 (DoF 열)
-            MatrixXd JR = JR_full.topRows<3>();
-
-            Vector3d xL_dot_actual = JL * dual_arm_jointv_vec;
-            Vector3d xR_dot_actual = JR * dual_arm_jointv_vec;
-
-            // 목표(지령) EE 위치/속도 (target 궤적 기준 FK, 같은 자코비안으로 근사)
-            pinocchio::forwardKinematics(model, data, dual_arm_targetp_vec);
-            pinocchio::updateFramePlacements(model, data);
-            Vector3d xL_d = data.oMf[l_EE].translation();
-            Vector3d xR_d = data.oMf[r_EE].translation();
-
-            VectorXd targetv_vec(DoF);
-            for (int i = 0; i < DoF; i++) targetv_vec(i) = dual_arm_targetv[i];
-            Vector3d xL_d_dot = JL * targetv_vec;
-            Vector3d xR_d_dot = JR * targetv_vec;
-
-            Vector3d eL = xL_actual - xL_d;
-            Vector3d eR = xR_actual - xR_d;
-            Vector3d eL_dot = xL_dot_actual - xL_d_dot;
-            Vector3d eR_dot = xR_dot_actual - xR_d_dot;
-
-            // F/T 원시값은 접촉 순간 노이즈가 커서(수십 N 단위로 수 ms만에 요동) 그대로 쓰면 임피던스
-            // 가속도(eL_ddot)에 그대로 증폭 반영되어 스퀴즈 접촉이 떨린다(chatter) - 로우패스로 완화.
-            for (int k = 0; k < 3; k++) {
-                left_ft_force_lpf(k)  = dualarm.LowPassFilter(left_ft_force(k),  left_ft_force_before(k),  FT_LPF_CUTOFF_HZ);
-                right_ft_force_lpf(k) = dualarm.LowPassFilter(right_ft_force(k), right_ft_force_before(k), FT_LPF_CUTOFF_HZ);
-            }
-            left_ft_force_before  = left_ft_force_lpf;
-            right_ft_force_before = right_ft_force_lpf;
-
-            // F/T 센서 힘: 센서가 EE 프레임과 동일 방향으로 장착되었다고 가정하고 world frame으로 변환
-            Vector3d F_ext_L = RL_actual * left_ft_force_lpf;
-            Vector3d F_ext_R = RR_actual * right_ft_force_lpf;
-
-            Vector3d eL_ddot, eR_ddot;
-            for (int k = 0; k < 3; k++) {
-                eL_ddot(k) = (F_ext_L(k) - Bd_left[k]*eL_dot(k) - Kd_imp_left[k]*eL(k)) / Md_left[k];
-                eR_ddot(k) = (F_ext_R(k) - Bd_right[k]*eR_dot(k) - Kd_imp_right[k]*eR(k)) / Md_right[k];
-            }
-
-            VectorXd dq_ddot_L = dualarm.DampedPinv(JL, IMPEDANCE_DLS_LAMBDA) * eL_ddot;
-            VectorXd dq_ddot_R = dualarm.DampedPinv(JR, IMPEDANCE_DLS_LAMBDA) * eR_ddot;
-
-            dual_arm_targeta_vec += dq_ddot_L + dq_ddot_R;
-        }
+        // 어드미턴스 제어는 위 PHASE_GRASP_TO_PLACE 분기 안에서 이미 dual_arm_targetp/targetv/targeta를
+        // q_cmd/q_cmd_dot/q_cmd_ddot로 직접 채웠으므로, 여기서는 그 값 그대로 RNEA에 넘기기만 하면 된다
+        // (예전 임피던스처럼 토크 레벨에서 별도로 더해줄 필요 없음).
 
         // dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_jointv, PD_torque);
         gravity_torque = pinocchio::computeGeneralizedGravity(model, data, dual_arm_jointp_vec);

@@ -297,10 +297,3 @@ void DualArmControl::CartesianLineTrajectory(const Vector3d& startL, const Vecto
         acc_out(j,3)=aR.x(); acc_out(j,4)=aR.y(); acc_out(j,5)=aR.z();
     }
 }
-
-MatrixXd DualArmControl::DampedPinv(const MatrixXd& J, double lambda)
-{
-    MatrixXd JJt = J * J.transpose();
-    MatrixXd I = MatrixXd::Identity(JJt.rows(), JJt.cols());
-    return J.transpose() * (JJt + lambda*lambda*I).inverse();
-}
