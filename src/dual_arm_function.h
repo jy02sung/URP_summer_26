@@ -140,18 +140,26 @@ Vector3d left_ft_force_before  = Vector3d::Zero();
 Vector3d right_ft_force_before = Vector3d::Zero();
 const double FT_LPF_CUTOFF_HZ  = 10.0;  // 컷오프 주파수 [Hz]
 
-// 가상 질량-댐핑-강성 파라미터 (튜닝용).
-// x,y(인덱스 0,1): 위치추종 admittance - M(ẍcmd−ẍd) + D(ẋcmd−ẋd) + K(xcmd−xd) = 0
-// z(인덱스 2):     힘추종 admittance   - M·z̈cmd + D·żcmd = F_ext,z − F_d,z  (K_z=0 고정, 아래서 0으로 둠)
+// 가상 질량-댐핑-강성 파라미터 (튜닝용). 배열 인덱스는 world frame [x,y,z]지만, 이 로봇의 실제
+// 스퀴즈(파지) 방향은 world Z(수직)가 아니라 world Y다 - objL/objR이 obj ± (0,grasp_offset,0)로
+// y축 양쪽에서 마주보고 조이는 구조이기 때문 (main.cpp buildGraspPipelineFromDetection 참고).
+// 그래서 힘추종은 인덱스 1(y)에, 위치추종은 인덱스 0,2(x,z - z는 들어올리기/이송 높이)에 적용한다.
+// x,z(인덱스 0,2): 위치추종 admittance - M(ẍcmd−ẍd) + D(ẋcmd−ẋd) + K(xcmd−xd) = 0
+// y(인덱스 1):     힘추종 admittance   - M·ÿcmd + D·ẏcmd = F_ext,y − F_d,y  (K_y=0 고정, 아래서 0으로 둠)
 double Ma_left[3] = { 2.0, 2.0, 2.0 };      // 가상 질량 [kg]
 double Da_left[3] = { 65.0, 65.0, 65.0 };   // 가상 댐핑 [N·s/m]
-double Ka_left[3] = { 500.0, 500.0, 0.0 };  // 가상 강성 [N/m] - z는 순수 힘제어라 0 고정
+double Ka_left[3] = { 500.0, 0.0, 500.0 };  // 가상 강성 [N/m] - y(스퀴즈)는 순수 힘제어라 0 고정
 
 double Ma_right[3] = { 2.0, 2.0, 2.0 };
 double Da_right[3] = { 65.0, 65.0, 65.0 };
-double Ka_right[3] = { 500.0, 500.0, 0.0 };
+double Ka_right[3] = { 500.0, 0.0, 500.0 };
 
-const double ADMITTANCE_FD_Z = 10.0;  // z방향(스퀴즈) 목표 힘 F_d,z [N]
+// 스퀴즈 목표 힘 F_d,y [N]. 왼팔은 obj +y쪽에서 -y로 누르고 오른팔은 obj -y쪽에서 +y로 눌러
+// 서로를 향해 조이므로, F/T가 world frame으로 변환된 뒤의 부호는 팔마다 반대다 - 2026-07-13 Gazebo
+// 실측(PHASE_APPROACH 구간, 어드미턴스 미개입 순수 위치유지 스퀴즈)으로 확인:
+// F_ext_L(y) 평균 +5.4N(양수), F_ext_R(y) 평균 -3.4N(음수). 그래서 목표값도 팔마다 부호를 맞춘다.
+const double ADMITTANCE_FD_Y_LEFT  =  10.0;
+const double ADMITTANCE_FD_Y_RIGHT = -10.0;
 
 // 어드미턴스 command 적분 상태 (tick 간 유지). PHASE_GRASP_TO_PLACE 진입 순간 실제 EE 위치로
 // 초기화되고(admittance_initialized), 그 밖에서는 다음 진입에 대비해 리셋된다 (main.cpp).
@@ -160,6 +168,22 @@ Vector3d xL_cmd_dot = Vector3d::Zero();
 Vector3d xR_cmd     = Vector3d::Zero();
 Vector3d xR_cmd_dot = Vector3d::Zero();
 bool admittance_initialized = false;
+
+// y(스퀴즈)를 "기준 궤적 없는 순수 힘추종"으로 처음 구현했더니(2026-07-13 1차 Gazebo 검증) 물체가
+// 거의 옮겨지지 않았다 - 이 로봇은 이송목표가 pick 지점 대비 주로 Y방향으로 떨어져 있어(objL.y≈-0.11
+// -> transportL.y≈0.44, 약 0.55m) 스퀴즈 축(Y)이 동시에 이송 방향이기도 하기 때문. PRD 수식이 z(스퀴즈)에
+// 기준궤적 항을 안 둔 건 "스퀴즈 축 ⊥ 이송 방향"을 암묵 전제한 것인데 이 로봇 기하에서는 안 맞았다.
+// 그래서 y_cmd = y_d(t)(계획된 이송 경로, 기준) + deltaY(힘오차로 만든 순응 변위)로 재정의한다 -
+// 이송은 y_d(t)가 그대로 담당하고, deltaY만 K=0 힘추종 법칙(M*deltaY_ddot + D*deltaY_dot = F_ext,y - F_d,y)을
+// 그대로 따른다. deltaY_dot/deltaY도 접촉 순간유실 시 무한정 커지는 것을 막기 위해 속도/변위를 하드 리밋한다
+// (스프링이 아니라 리밋 - 1차 검증에서 리밋 없이는 실제로 발산해 물체가 바닥에 떨어지는 것을 확인).
+double deltaYL = 0.0, deltaYR = 0.0;   // y_cmd의 y_d(t) 대비 순응 변위 (PHASE_GRASP_TO_PLACE 진입 시 현재 오프셋으로 초기화)
+// 2026-07-13 2차 검증(deltaY 도입 후): 물체는 실제로 옮겨지기 시작했지만 fy가 목표(±10N) 근처에
+// 못 미친 채(수~기N대) deltaY가 ±15mm에서 막혀 스퀴즈력 부족 -> 이송 중 관성부하를 못 버티고
+// 슬립/낙하. 15mm는 접촉면을 충분히 눌러 10N을 낼 만큼 깊지 않았던 것으로 판단, 30mm로 확대.
+// 속도 리밋(0.03m/s)은 그대로 유지 - 발산 방지는 변위가 아니라 속도 쪽이 핵심이었음(1차 검증).
+const double Y_CMD_MAX_DISP = 0.03;   // y_d(t) 기준 deltaY 최대 변위 [m]
+const double Y_CMD_VEL_LIMIT = 0.03;  // deltaY 최대 속도 [m/s] (기존 APPROACH_CONTACT_V_DES와 동일한 완만한 접촉 속도)
 
 // 매 tick IK 웜스타트 + 관절 속도/가속도 후진차분용 (온라인 계산이라 중심차분 대신 후진차분 사용)
 VectorXd q_cmd_prev     = VectorXd::Zero(DoF);

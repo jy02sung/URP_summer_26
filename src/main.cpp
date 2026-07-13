@@ -737,17 +737,6 @@ int main(int argc, char **argv)
                 Matrix3d RL_actual = data.oMf[l_EE].rotation();
                 Matrix3d RR_actual = data.oMf[r_EE].rotation();
 
-                // PHASE_GRASP_TO_PLACE 진입 첫 tick: 불연속 방지를 위해 실제 현재 상태로 초기화
-                if (!admittance_initialized) {
-                    xL_cmd = xL_actual;
-                    xR_cmd = xR_actual;
-                    xL_cmd_dot.setZero();
-                    xR_cmd_dot.setZero();
-                    q_cmd_prev = dual_arm_jointp_vec;
-                    q_cmd_dot_prev.setZero();
-                    admittance_initialized = true;
-                }
-
                 // 사전 계획된 desired trajectory (x_d, ẋ_d, ẍ_d) 조회
                 Vector3d xL_d(dual_arm_cart_target_trajectory(traj_cnt,0), dual_arm_cart_target_trajectory(traj_cnt,1), dual_arm_cart_target_trajectory(traj_cnt,2));
                 Vector3d xR_d(dual_arm_cart_target_trajectory(traj_cnt,3), dual_arm_cart_target_trajectory(traj_cnt,4), dual_arm_cart_target_trajectory(traj_cnt,5));
@@ -755,6 +744,20 @@ int main(int argc, char **argv)
                 Vector3d xR_d_dot(dual_arm_cart_target_vel_trajectory(traj_cnt,3), dual_arm_cart_target_vel_trajectory(traj_cnt,4), dual_arm_cart_target_vel_trajectory(traj_cnt,5));
                 Vector3d xL_d_ddot(dual_arm_cart_target_acc_trajectory(traj_cnt,0), dual_arm_cart_target_acc_trajectory(traj_cnt,1), dual_arm_cart_target_acc_trajectory(traj_cnt,2));
                 Vector3d xR_d_ddot(dual_arm_cart_target_acc_trajectory(traj_cnt,3), dual_arm_cart_target_acc_trajectory(traj_cnt,4), dual_arm_cart_target_acc_trajectory(traj_cnt,5));
+
+                // PHASE_GRASP_TO_PLACE 진입 첫 tick: 불연속 방지를 위해 실제 현재 상태로 초기화.
+                // y(스퀴즈)는 y_d(t)(이송 기준 경로) 대비 현재 오프셋을 deltaY 시작값으로 잡는다.
+                if (!admittance_initialized) {
+                    xL_cmd = xL_actual;
+                    xR_cmd = xR_actual;
+                    xL_cmd_dot.setZero();
+                    xR_cmd_dot.setZero();
+                    q_cmd_prev = dual_arm_jointp_vec;
+                    q_cmd_dot_prev.setZero();
+                    deltaYL = xL_actual(1) - xL_d(1);
+                    deltaYR = xR_actual(1) - xR_d(1);
+                    admittance_initialized = true;
+                }
 
                 // F/T: 접촉 노이즈 완화 위해 기존과 동일하게 10Hz LPF 적용 후 world frame으로 변환
                 for (int k = 0; k < 3; k++) {
@@ -766,20 +769,38 @@ int main(int argc, char **argv)
                 Vector3d F_ext_L = RL_actual * left_ft_force_lpf;
                 Vector3d F_ext_R = RR_actual * right_ft_force_lpf;
 
-                // x,y: 위치추종 admittance (우항 0) / z: 힘추종 admittance (K_z=0, 목표힘 ADMITTANCE_FD_Z)
-                Vector3d xL_cmd_ddot, xR_cmd_ddot;
-                for (int k = 0; k < 2; k++) {   // x, y
+                // x,z: 위치추종 admittance (우항 0) / y(스퀴즈 방향): 힘추종 admittance (K_y=0, 목표힘 ADMITTANCE_FD_Y_*)
+                // 이 로봇은 objL/objR이 obj ± (0,grasp_offset,0)로 world Y축 양쪽에서 마주보고 조이는
+                // 구조라 스퀴즈 방향이 world Y다 (world Z는 들어올리기/이송 높이라 위치추종 대상).
+                Vector3d xL_cmd_ddot = Vector3d::Zero(), xR_cmd_ddot = Vector3d::Zero();  // index 1(y)은 아래서 별도(deltaY)로 처리
+                for (int k : {0, 2}) {   // x, z
                     xL_cmd_ddot(k) = xL_d_ddot(k) - (Da_left[k]*(xL_cmd_dot(k)-xL_d_dot(k))  + Ka_left[k]*(xL_cmd(k)-xL_d(k)))   / Ma_left[k];
                     xR_cmd_ddot(k) = xR_d_ddot(k) - (Da_right[k]*(xR_cmd_dot(k)-xR_d_dot(k)) + Ka_right[k]*(xR_cmd(k)-xR_d(k))) / Ma_right[k];
                 }
-                xL_cmd_ddot(2) = (F_ext_L(2) - ADMITTANCE_FD_Z - Da_left[2]*xL_cmd_dot(2))  / Ma_left[2];
-                xR_cmd_ddot(2) = (F_ext_R(2) - ADMITTANCE_FD_Z - Da_right[2]*xR_cmd_dot(2)) / Ma_right[2];
+                // y(스퀴즈): deltaY(y_d(t) 대비 순응 변위)만 K=0 힘추종 법칙을 따른다. 이송 자체는
+                // y_d(t)가 담당하므로, 스퀴즈 축이 곧 이송 방향인 이 로봇 기하에서도 물체가 실제로
+                // 옮겨진다 (deltaY는 그 위에 얹히는 작은 압착 보정일 뿐).
+                double deltaYL_ddot = (F_ext_L(1) - ADMITTANCE_FD_Y_LEFT  - Da_left[1]*xL_cmd_dot(1))  / Ma_left[1];
+                double deltaYR_ddot = (F_ext_R(1) - ADMITTANCE_FD_Y_RIGHT - Da_right[1]*xR_cmd_dot(1)) / Ma_right[1];
 
                 // Euler 적분으로 command(x_cmd) 생성
                 xL_cmd_dot += xL_cmd_ddot * SAMPLING_TIME;
                 xL_cmd     += xL_cmd_dot  * SAMPLING_TIME;
                 xR_cmd_dot += xR_cmd_ddot * SAMPLING_TIME;
                 xR_cmd     += xR_cmd_dot  * SAMPLING_TIME;
+
+                // deltaY도 Euler 적분. K=0이라 되돌리는 힘이 없어 접촉 순간유실 등으로 힘 오차가
+                // 계속 크게 남으면 무한정 커질 수 있어(첫 검증에서 실제 발산 확인) 속도/변위를 하드 리밋.
+                xL_cmd_dot(1) += deltaYL_ddot * SAMPLING_TIME;
+                xR_cmd_dot(1) += deltaYR_ddot * SAMPLING_TIME;
+                xL_cmd_dot(1) = std::min(std::max(xL_cmd_dot(1), -Y_CMD_VEL_LIMIT), Y_CMD_VEL_LIMIT);
+                xR_cmd_dot(1) = std::min(std::max(xR_cmd_dot(1), -Y_CMD_VEL_LIMIT), Y_CMD_VEL_LIMIT);
+                deltaYL += xL_cmd_dot(1) * SAMPLING_TIME;
+                deltaYR += xR_cmd_dot(1) * SAMPLING_TIME;
+                deltaYL = std::min(std::max(deltaYL, -Y_CMD_MAX_DISP), Y_CMD_MAX_DISP);
+                deltaYR = std::min(std::max(deltaYR, -Y_CMD_MAX_DISP), Y_CMD_MAX_DISP);
+                xL_cmd(1) = xL_d(1) + deltaYL;
+                xR_cmd(1) = xR_d(1) + deltaYR;
 
                 // x_cmd -> IK (직전 q_cmd로 웜스타트, 매 tick 목표가 미세하게만 움직여 빠르게 수렴 예상)
                 VectorXd q_cmd(DoF);
