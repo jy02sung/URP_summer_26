@@ -395,7 +395,7 @@
         xyz="0 -0.0375 -0.005"
         rpy="0 0 0" />
       <geometry>
-        <box size="0.04 0.01 0.04" />
+        <box size="0.055 0.014 0.055" />
       </geometry>
     </collision>
     <visual name="L_EE_grip_pad_visual">
@@ -403,7 +403,7 @@
         xyz="0 -0.0375 -0.005"
         rpy="0 0 0" />
       <geometry>
-        <box size="0.04 0.01 0.04" />
+        <box size="0.055 0.014 0.055" />
       </geometry>
       <material name="grip_pad_visual_dark">
         <color rgba="0.12 0.12 0.12 1" />
@@ -712,7 +712,7 @@
         xyz="0 0.0375 -0.005"
         rpy="0 0 0" />
       <geometry>
-        <box size="0.04 0.01 0.04" />
+        <box size="0.055 0.014 0.055" />
       </geometry>
     </collision>
     <visual name="R_EE_grip_pad_visual">
@@ -720,7 +720,7 @@
         xyz="0 0.0375 -0.005"
         rpy="0 0 0" />
       <geometry>
-        <box size="0.04 0.01 0.04" />
+        <box size="0.055 0.014 0.055" />
       </geometry>
       <material name="grip_pad_visual_dark">
         <color rgba="0.12 0.12 0.12 1" />
@@ -919,9 +919,23 @@
     <provideFeedback>true</provideFeedback>
   </gazebo>
 
+  <gazebo reference="L_EE">
+    <mu1>3.0</mu1>
+    <mu2>3.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>10.0</kd>
+  </gazebo>
+
   <gazebo reference="R_EE_joint">
     <disableFixedJointLumping>true</disableFixedJointLumping>
     <provideFeedback>true</provideFeedback>
+  </gazebo>
+
+  <gazebo reference="R_EE">
+    <mu1>3.0</mu1>
+    <mu2>3.0</mu2>
+    <kp>1000000.0</kp>
+    <kd>10.0</kd>
   </gazebo>
 
   <!-- gazebo_ros_ft_sensor: L_EE_joint/R_EE_joint에 걸리는 반력을 각각

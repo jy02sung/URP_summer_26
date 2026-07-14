@@ -120,17 +120,32 @@ double target_torque[DoF] = {0, };
 // (msgCallbackTaskPhase의 범위 체크가 PHASE_APPROACH~PHASE_RETURN까지만 허용).
 enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2, PHASE_SCAN = 3 };
 int task_phase = PHASE_APPROACH;
+int grasp_gate_row = -1;         // lift 세그먼트 진입 직전(마지막 squeeze row 다음) 인덱스
+int grasp_gate_end_row = -1;     // return 세그먼트 진입 직전 인덱스; gate는 이 전까지만 유효
+bool grasp_contact_ready = false;
+int grasp_contact_ticks = 0;
+int grasp_post_contact_hold_ticks = 0;
 
 // F/T 센서 측정값 (force.x,y,z), /dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor 콜백에서 갱신
 Vector3d left_ft_force  = Vector3d::Zero();
 Vector3d right_ft_force = Vector3d::Zero();
+Vector3d left_ft_torque  = Vector3d::Zero();
+Vector3d right_ft_torque = Vector3d::Zero();
 
 // F/T 로우패스 필터 상태 (어드미턴스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp에서 갱신)
 Vector3d left_ft_force_lpf     = Vector3d::Zero();
 Vector3d right_ft_force_lpf    = Vector3d::Zero();
 Vector3d left_ft_force_before  = Vector3d::Zero();
 Vector3d right_ft_force_before = Vector3d::Zero();
+Vector3d left_ft_torque_lpf     = Vector3d::Zero();
+Vector3d right_ft_torque_lpf    = Vector3d::Zero();
+Vector3d left_ft_torque_before  = Vector3d::Zero();
+Vector3d right_ft_torque_before = Vector3d::Zero();
 const double FT_LPF_CUTOFF_HZ  = 10.0;  // 컷오프 주파수 [Hz]
+const double GRASP_CONTACT_FORCE_THRESHOLD = 1.1;     // [N] 좌우 모두 이 값 이상일 때 squeeze 접촉 후보
+const double GRASP_FACE_CONTACT_TORQUE_THRESHOLD = 0.08; // [N*m] 손바닥 면접촉이면 x/z 모멘트가 작아야 함
+const int    GRASP_CONTACT_HOLD_TICKS = 120;         // 0.12s @ 1kHz
+const int    GRASP_POST_CONTACT_HOLD_TICKS = 500;    // 0.50s @ 1kHz, 접촉 직후 그대로 더 조여서 안정화
 
 // 가상 스프링-댐퍼-질량 파라미터 (튜닝용): Ma*x_ddot + Da*x_dot + Ka*x = F_ext.
 // x는 nominal grasp trajectory 위에 덧붙이는 Cartesian compliance offset이다.
@@ -149,6 +164,7 @@ Vector3d right_adm_vel = Vector3d::Zero();
 const double ADMITTANCE_DLS_LAMBDA = 0.05;   // Cartesian offset -> arm joint offset 변환용
 const double ADMITTANCE_POS_LIMIT  = 0.05;   // 축별 최대 순응 변위 [m]
 const double ADMITTANCE_VEL_LIMIT  = 0.25;   // 축별 최대 순응 속도 [m/s]
+const double DESIRED_SQUEEZE_FORCE = 2.6;    // [N] transport 중 유지하려는 손당 정상 squeeze 힘
 
 
 

@@ -189,9 +189,9 @@ void DualArmControl::PDController(double* target_q, double* current_q, double* t
 ////////////////////////////////////////////////////////////////////////////////////////////
 //----------------------------------- Inverse Kinematics ---------------------------------//
 ////////////////////////////////////////////////////////////////////////////////////////////
-// DLS(Damped Least Squares) 위치 IK.
-// AGENTS 제약에 맞춰 waist/head를 고정하고, 왼팔 4축(3~6) / 오른팔 4축(7~10)을
-// 각각 독립적으로 푼 뒤 하나의 q 벡터로 합친다.
+// DLS(Damped Least Squares) arm-only IK.
+// AGENTS 제약에 맞춰 waist/head를 고정하고, 왼팔 4축(3~6) / 오른팔 4축(7~10)만 사용한다.
+// 위치 오차가 우선이며, 손끝 평면이 큐브 옆면과 더 잘 맞도록 약한 자세/방향 bias를 같이 준다.
 void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& data,
                                       pinocchio::FrameIndex l_EE, pinocchio::FrameIndex r_EE,
                                       const Vector3d& target_L, const Vector3d& target_R,
@@ -199,12 +199,21 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
 {
     const double lambda = 0.1;    // DLS 댐핑
     const double tol    = 1e-4;   // 수렴 허용 오차 [m]
+    const double rot_tol = 5e-2;  // 손끝 방향 허용 오차
     const int    maxIter= 300;    // 최대 반복
-    const double step   = 1.0;    // 스텝 스케일 (= K·Δt 개념, 발산하면 줄이기)
+    const double step   = 0.6;    // 위치/방향을 같이 푸므로 기존보다 보수적으로
+    const double orient_weight = 0.20;
+    const double posture_gain = 0.12;
 
     VectorXd q = q_seed;
     const int left_arm_idx[4] = {3, 4, 5, 6};
     const int right_arm_idx[4] = {7, 8, 9, 10};
+    Vector4d q_pref_L;
+    Vector4d q_pref_R;
+    q_pref_L << 0.80, 0.00, -0.20, -0.45;
+    q_pref_R << 0.80, 0.00,  0.20, -0.45;
+    const Vector3d desired_y_axis = Vector3d::UnitY();
+    const Vector3d desired_x_axis = Vector3d::UnitZ();
 
     for (int iter = 0; iter < maxIter; ++iter)
     {
@@ -214,28 +223,60 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
 
         Vector3d xL = data.oMf[l_EE].translation();
         Vector3d xR = data.oMf[r_EE].translation();
+        Matrix3d RL = data.oMf[l_EE].rotation();
+        Matrix3d RR = data.oMf[r_EE].rotation();
 
         Vector3d eL = target_L - xL;
         Vector3d eR = target_R - xR;
+        Vector3d yL = RL.col(1);
+        Vector3d yR = RR.col(1);
+        Vector3d xL_axis = RL.col(0);
+        Vector3d xR_axis = RR.col(0);
+        Vector3d rotErrL = yL.cross(desired_y_axis) + 0.35 * xL_axis.cross(desired_x_axis);
+        Vector3d rotErrR = yR.cross(desired_y_axis) + 0.35 * xR_axis.cross(desired_x_axis);
 
-        if (std::max(eL.norm(), eR.norm()) < tol) break;
+        if (std::max(eL.norm(), eR.norm()) < tol &&
+            std::max(rotErrL.norm(), rotErrR.norm()) < rot_tol) {
+            break;
+        }
 
         pinocchio::Data::Matrix6x JL_full(6, model.nv); JL_full.setZero();
         pinocchio::Data::Matrix6x JR_full(6, model.nv); JR_full.setZero();
         pinocchio::getFrameJacobian(model, data, l_EE, pinocchio::LOCAL_WORLD_ALIGNED, JL_full);
         pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR_full);
 
-        MatrixXd JL(3, 4);
-        MatrixXd JR(3, 4);
+        MatrixXd JL(6, 4);
+        MatrixXd JR(6, 4);
         for (int col = 0; col < 4; ++col) {
-            JL.col(col) = JL_full.topRows<3>().col(left_arm_idx[col]);
-            JR.col(col) = JR_full.topRows<3>().col(right_arm_idx[col]);
+            JL.col(col).head<3>() = JL_full.topRows<3>().col(left_arm_idx[col]);
+            JL.col(col).tail<3>() = orient_weight * JL_full.bottomRows<3>().col(left_arm_idx[col]);
+            JR.col(col).head<3>() = JR_full.topRows<3>().col(right_arm_idx[col]);
+            JR.col(col).tail<3>() = orient_weight * JR_full.bottomRows<3>().col(right_arm_idx[col]);
         }
 
-        MatrixXd JLJt = JL * JL.transpose() + (lambda * lambda) * MatrixXd::Identity(3, 3);
-        MatrixXd JRJt = JR * JR.transpose() + (lambda * lambda) * MatrixXd::Identity(3, 3);
-        VectorXd dqL = JL.transpose() * JLJt.ldlt().solve(eL);
-        VectorXd dqR = JR.transpose() * JRJt.ldlt().solve(eR);
+        VectorXd taskErrL(6), taskErrR(6);
+        taskErrL.head<3>() = eL;
+        taskErrL.tail<3>() = orient_weight * rotErrL;
+        taskErrR.head<3>() = eR;
+        taskErrR.tail<3>() = orient_weight * rotErrR;
+
+        MatrixXd JLJt = JL * JL.transpose() + (lambda * lambda) * MatrixXd::Identity(6, 6);
+        MatrixXd JRJt = JR * JR.transpose() + (lambda * lambda) * MatrixXd::Identity(6, 6);
+        MatrixXd JpinvL = JL.transpose() * JLJt.ldlt().solve(MatrixXd::Identity(6, 6));
+        MatrixXd JpinvR = JR.transpose() * JRJt.ldlt().solve(MatrixXd::Identity(6, 6));
+
+        VectorXd dqL = JpinvL * taskErrL;
+        VectorXd dqR = JpinvR * taskErrR;
+
+        Vector4d qL_cur, qR_cur;
+        for (int i = 0; i < 4; ++i) {
+            qL_cur(i) = q(left_arm_idx[i]);
+            qR_cur(i) = q(right_arm_idx[i]);
+        }
+        Matrix4d NL = Matrix4d::Identity() - JpinvL * JL;
+        Matrix4d NR = Matrix4d::Identity() - JpinvR * JR;
+        dqL += NL * (posture_gain * (q_pref_L - qL_cur));
+        dqR += NR * (posture_gain * (q_pref_R - qR_cur));
 
         for (int i = 0; i < 4; ++i) {
             q(left_arm_idx[i]) += step * dqL(i);

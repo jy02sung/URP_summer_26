@@ -93,14 +93,14 @@ int scan_pitch_index = 0;
 const double STARTUP_WAIST = 0.0;
 const double STARTUP_HEAD_YAW = 0.0;
 const double STARTUP_HEAD_PITCH = 0.0;
-const double STARTUP_L_SHOULDER_PITCH = 0.80;
+const double STARTUP_L_SHOULDER_PITCH = 0.68;
 const double STARTUP_L_SHOULDER_ROLL = 0.0;
 const double STARTUP_L_SHOULDER_YAW = -0.20;
-const double STARTUP_L_ELBOW = -0.35;
-const double STARTUP_R_SHOULDER_PITCH = 0.80;
+const double STARTUP_L_ELBOW = -0.45;
+const double STARTUP_R_SHOULDER_PITCH = 0.68;
 const double STARTUP_R_SHOULDER_ROLL = 0.0;
 const double STARTUP_R_SHOULDER_YAW = 0.20;
-const double STARTUP_R_ELBOW = -0.35;
+const double STARTUP_R_ELBOW = -0.45;
 const int STARTUP_HOLD_TICKS = 1000;           // 1.0s @ 1000Hz
 const double STARTUP_MOVE_DURATION = 3.0;      // [s] 초기 자세로 천천히 이동
 const double STARTUP_SETTLE_VEL_NORM = 0.35;   // [rad/s]
@@ -177,6 +177,9 @@ void msgCallbackLeftFTSensor(const geometry_msgs::WrenchStamped::ConstPtr& msg)
     left_ft_force(0) = msg->wrench.force.x;
     left_ft_force(1) = msg->wrench.force.y;
     left_ft_force(2) = msg->wrench.force.z;
+    left_ft_torque(0) = msg->wrench.torque.x;
+    left_ft_torque(1) = msg->wrench.torque.y;
+    left_ft_torque(2) = msg->wrench.torque.z;
 }
 
 void msgCallbackRightFTSensor(const geometry_msgs::WrenchStamped::ConstPtr& msg)
@@ -184,13 +187,17 @@ void msgCallbackRightFTSensor(const geometry_msgs::WrenchStamped::ConstPtr& msg)
     right_ft_force(0) = msg->wrench.force.x;
     right_ft_force(1) = msg->wrench.force.y;
     right_ft_force(2) = msg->wrench.force.z;
+    right_ft_torque(0) = msg->wrench.torque.x;
+    right_ft_torque(1) = msg->wrench.torque.y;
+    right_ft_torque(2) = msg->wrench.torque.z;
 }
 
 // 수동 오버라이드용 (idle 상태이거나 mode 0/1/2 테스트 시에만 유효.
 // vision pick(mode 3) 재생 중에는 main.cpp가 세그먼트 기반으로 매 스텝 덮어씀)
 void msgCallbackTaskPhase(const std_msgs::Int32::ConstPtr& msg)
 {
-    if (msg->data >= PHASE_APPROACH && msg->data <= PHASE_RETURN) {
+    if (!scan_active && command_mode != 3 &&
+        msg->data >= PHASE_APPROACH && msg->data <= PHASE_RETURN) {
         task_phase = msg->data;
     }
 }
@@ -218,6 +225,7 @@ void msgCallbackDualArmCmd(const std_msgs::Float32MultiArray::ConstPtr& msg)
         }
     }
     callback = true;
+    ROS_INFO("DualArmCmd callback: mode=%d", command_mode);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -451,10 +459,15 @@ int main(int argc, char **argv)
                        + Vector3d(0, 0, -MARKER_TO_BOX_CENTER);
         Vector3d transport_pt(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
 
-        // 양팔 동시 파지 간격(물체를 y축 양쪽에서 감싸는 형태)
-        // aruco_box_26 기준: 10cm 정육면체, y방향 half-width = 0.05m
-        const double grasp_offset = 0.040;  // 물체/이송목표 좌우 간격 (표면 안쪽 10mm 압착 - 기존 5mm는 정적 유지 여유만 있고
-                                             // 이송 중 관성부하를 버틸 마진이 없어 슬립 발생, Kd_imp 상향과 함께 조임)
+        // 큐브 면 기준 파지 목표 생성:
+        // - 좌/우 손은 큐브의 +Y / -Y face center를 향한다.
+        // - 초기 contact는 face에서 약간 바깥쪽, final squeeze는 face 안쪽으로 소폭 침투시켜
+        //   손바닥 면이 큐브 면에 맞닿은 뒤 더 조이도록 만든다.
+        const double BOX_HALF_Y = 0.050;
+        const double CONTACT_X_BIAS = -0.020;     // 몸쪽(-x)으로 더 당겨 손이 큐브 앞쪽이 아니라 옆면 중앙을 잡게 함
+        const double CONTACT_Z_BIAS = -0.055;     // 중심보다 더 아래를 잡아 lift 때 받쳐들기 유리하게
+        const double CONTACT_FACE_INSET = 0.008;  // 첫 접촉 시 face 안쪽 침투량 [m]
+        const double SQUEEZE_FACE_INSET = 0.016;  // final squeeze 침투량 [m]
 
         VectorXd base_seed(DoF);
         for (int i = 0; i < DoF; i++) base_seed(i) = base_q[i];
@@ -464,11 +477,15 @@ int main(int argc, char **argv)
         Vector3d start_L = data.oMf[l_EE].translation();
         Vector3d start_R = data.oMf[r_EE].translation();
 
-        // 물체/이송목표 좌우 접근점 (y축 양쪽에서 감싸는 자세, z는 각각 물체/이송목표 높이)
-        Vector3d objL = obj + Vector3d(0, grasp_offset, 0);
-        Vector3d objR = obj + Vector3d(0, -grasp_offset, 0);
-        Vector3d transportL = transport_pt + Vector3d(0, grasp_offset, 0);
-        Vector3d transportR = transport_pt + Vector3d(0, -grasp_offset, 0);
+        // 물체/이송목표의 좌우 face center 기반 목표점
+        Vector3d objL = obj + Vector3d(CONTACT_X_BIAS,  BOX_HALF_Y - CONTACT_FACE_INSET, CONTACT_Z_BIAS);
+        Vector3d objR = obj + Vector3d(CONTACT_X_BIAS, -BOX_HALF_Y + CONTACT_FACE_INSET, CONTACT_Z_BIAS);
+        Vector3d squeezeL = obj + Vector3d(CONTACT_X_BIAS,  BOX_HALF_Y - SQUEEZE_FACE_INSET, CONTACT_Z_BIAS);
+        Vector3d squeezeR = obj + Vector3d(CONTACT_X_BIAS, -BOX_HALF_Y + SQUEEZE_FACE_INSET, CONTACT_Z_BIAS);
+        Vector3d transportL = transport_pt + Vector3d(CONTACT_X_BIAS,  BOX_HALF_Y - SQUEEZE_FACE_INSET, CONTACT_Z_BIAS);
+        Vector3d transportR = transport_pt + Vector3d(CONTACT_X_BIAS, -BOX_HALF_Y + SQUEEZE_FACE_INSET, CONTACT_Z_BIAS);
+        Vector3d releaseL = transport_pt + Vector3d(CONTACT_X_BIAS,  BOX_HALF_Y + 0.035, CONTACT_Z_BIAS);
+        Vector3d releaseR = transport_pt + Vector3d(CONTACT_X_BIAS, -BOX_HALF_Y - 0.035, CONTACT_Z_BIAS);
 
         // pick_pedestal(world 파일)이 파지점 바로 아래(z 1.05~1.15)에 y로 걸쳐 있어서, 시작 자세에서
         // objL/R로 곧장 3D 직선 이동하면 z가 받침대 상판보다 낮은 구간에서 x,y가 이미 받침대 영역에
@@ -476,20 +493,26 @@ int main(int argc, char **argv)
         // 상판보다 5cm 위)를 유지한 채 받침대 바깥쪽으로 STANDOFF_Y만큼 더 벌어진 standoff 지점으로
         // 이동하고, 그다음 그 높이를 유지한 채 y 방향으로만 직선 이동해 파지점에 들어간다 - 마지막
         // 구간은 항상 받침대보다 높은 높이에서만 움직이므로 부딪힐 수 없다.
-        const double STANDOFF_Y = 0.15;  // 받침대 y 반폭(0.06)보다 충분히 큰 여유
-        Vector3d standoffL = objL + Vector3d(0, STANDOFF_Y, 0);
-        Vector3d standoffR = objR + Vector3d(0, -STANDOFF_Y, 0);
+        const double STANDOFF_Y = 0.15;   // 받침대 y 반폭(0.06)보다 충분히 큰 여유
+        const double STANDOFF_Z_LIFT = 0.03; // 첫 진입은 파지점보다 조금 더 높게 들어가 모서리 걸림 방지
+        Vector3d standoffL = objL + Vector3d(0, STANDOFF_Y, STANDOFF_Z_LIFT);
+        Vector3d standoffR = objR + Vector3d(0, -STANDOFF_Y, STANDOFF_Z_LIFT);
 
         // 파지 직후 곧바로 파지점->이송목표 대각선 직선으로 이동하면 받침대/바닥 근처를 스치듯 지나갈
         // 수 있다. 스퀴즈를 유지한 채(PHASE_GRASP_TO_PLACE) 먼저 수직으로 LIFT_HEIGHT만큼 들어올린 뒤,
         // 그 높이에서 이송목표로 이동한다.
-        const double LIFT_HEIGHT = 0.10;  // 파지 높이에서 들어올릴 여유 [m]
-        Vector3d liftL = objL + Vector3d(0, 0, LIFT_HEIGHT);
-        Vector3d liftR = objR + Vector3d(0, 0, LIFT_HEIGHT);
+        const double LIFT_HEIGHT = 0.08;  // 파지 높이에서 들어올릴 여유 [m]
+        Vector3d liftL = squeezeL + Vector3d(0, 0, LIFT_HEIGHT);
+        Vector3d liftR = squeezeR + Vector3d(0, 0, LIFT_HEIGHT);
 
         std::vector<MatrixXd> pos_segs, vel_segs, acc_segs;
         std::vector<int> seg_phase;   // 세그먼트별 TaskPhase 태그 (재생 중 자동 전환용)
         VectorXd seed_vec = base_seed;
+        grasp_gate_row = -1;
+        grasp_gate_end_row = -1;
+        grasp_contact_ready = false;
+        grasp_contact_ticks = 0;
+        grasp_post_contact_hold_ticks = 0;
 
         // Cartesian 직선 구간 하나를 만들어 세그먼트 목록에 추가.
         // CartesianLineTrajectory로 6D(L+R) 직선 경로를 만들고, 매 웨이포인트마다 DLS IK를 풀어
@@ -544,23 +567,42 @@ int main(int argc, char **argv)
         // 1b) standoff -> 파지 위치로 y 방향 직선 접근 (파지 높이를 그대로 유지하므로 받침대와 부딪히지 않음)
         // objL/R은 이미 박스 표면 안쪽(grasp_offset 침투)까지를 목표로 하므로, 기본 속도(0.1m/s)로
         // 그대로 들어가면 접촉 순간 충격이 커서 좌우 접촉이 어긋나며 물체가 회전하며 떨어지는 문제가
-        // 있었다 - 이 구간만 더 느리게(v_des=0.03m/s) 접근해 접촉 충격을 줄인다.
-        const double APPROACH_CONTACT_V_DES = 0.03;
+        // 있었다 - 이 구간만 더 느리게 접근해 접촉 충격을 줄인다.
+        const double APPROACH_CONTACT_V_DES = 0.02;
         addCartesianSegment(standoffL, objL, standoffR, objR, PHASE_APPROACH, APPROACH_CONTACT_V_DES);
 
-        // 2) 파지 위치에서 수직으로 들어올리기. 이 구간부터 PHASE_GRASP_TO_PLACE로 태깅되어 어드미턴스
-        //    제어가 켜지고, 양팔 스퀴즈(grasp_offset) 마찰로 물체를 실제로 붙잡아 든다.
-        addCartesianSegment(objL, liftL, objR, liftR, PHASE_GRASP_TO_PLACE);
+        // 2) 첫 접촉 후, lift 전에 짧은 추가 압착으로 손끝 판이 더 면접촉에 가까워지도록 만든다.
+        const double FINAL_SQUEEZE_V_DES = 0.01;
+        addCartesianSegment(objL, squeezeL, objR, squeezeR, PHASE_GRASP_TO_PLACE, FINAL_SQUEEZE_V_DES);
+        {
+            int rows_before_lift = 0;
+            for (const auto& seg : pos_segs) rows_before_lift += seg.rows();
+            grasp_gate_row = rows_before_lift;
+        }
 
-        // 2b) 들어올린 높이를 유지한 채 목표 지점으로 이동 (계속 PHASE_GRASP_TO_PLACE, 스퀴즈 유지)
-        addCartesianSegment(liftL, transportL, liftR, transportR, PHASE_GRASP_TO_PLACE);
+        // 3) 추가 압착 상태에서 수직으로 들어올리기. 이 구간부터 어드미턴스가 계속 켜진 상태다.
+        addCartesianSegment(squeezeL, liftL, squeezeR, liftR, PHASE_GRASP_TO_PLACE, 0.025);
 
-        // 3) 내려놓기 완료 -> 원래 위치로 복귀
-        addCartesianSegment(transportL, start_L, transportR, start_R, PHASE_RETURN);
+        // 4) 들어올린 높이를 유지한 채 목표 지점으로 이동 (계속 PHASE_GRASP_TO_PLACE, 스퀴즈 유지)
+        addCartesianSegment(liftL, transportL, liftR, transportR, PHASE_GRASP_TO_PLACE, 0.035);
+        {
+            int rows_before_return = 0;
+            for (const auto& seg : pos_segs) rows_before_return += seg.rows();
+            grasp_gate_end_row = rows_before_return;
+        }
+
+        // 5) 목표 지점에서 양팔을 바깥으로 벌려 물체를 놓는다.
+        addCartesianSegment(transportL, releaseL, transportR, releaseR, PHASE_RETURN, 0.02);
+
+        // 6) 내려놓기 완료 -> 원래 위치로 복귀
+        addCartesianSegment(releaseL, start_L, releaseR, start_R, PHASE_RETURN);
 
         ROS_INFO("Vision pick(dual-arm): object(world)=[%.3f %.3f %.3f], transport=[%.3f %.3f %.3f]",
                  obj.x(), obj.y(), obj.z(),
                  transport_pt.x(), transport_pt.y(), transport_pt.z());
+        for (size_t k = 0; k < pos_segs.size(); ++k) {
+            ROS_INFO("  segment[%zu]: rows=%d phase=%d", k, (int)pos_segs[k].rows(), seg_phase[k]);
+        }
 
         int total_rows = 0;
         for (auto& s : pos_segs) total_rows += s.rows();
@@ -885,6 +927,16 @@ int main(int argc, char **argv)
             callback = false;
         }
         else if (traj_cnt < dual_arm_jointp_trajectory.rows()){
+            if (grasp_gate_row > 0 &&
+                traj_cnt >= grasp_gate_row &&
+                (grasp_gate_end_row < 0 || traj_cnt < grasp_gate_end_row)) {
+                if (!grasp_contact_ready) {
+                    traj_cnt = grasp_gate_row - 1;  // 마지막 squeeze row에 고정, bilateral contact 전에는 lift 금지
+                } else if (grasp_post_contact_hold_ticks < GRASP_POST_CONTACT_HOLD_TICKS) {
+                    traj_cnt = grasp_gate_row - 1;  // 접촉 직후 그대로 더 조여서 면접촉을 안정화
+                    grasp_post_contact_hold_ticks++;
+                }
+            }
             for (int i = 0; i < DoF; i++){
                 dual_arm_targetp[i] = dual_arm_jointp_trajectory(traj_cnt, i);
             }
@@ -898,7 +950,11 @@ int main(int argc, char **argv)
             // vision pick(mode 3) 재생 중이면 현재 행에 태깅된 phase로 자동 전환.
             // (mode 0/1/2는 전 구간 PHASE_APPROACH로 태깅되어 있어 어드미턴스가 자동으로 켜지지 않음)
             if (traj_cnt < dual_arm_phase_trajectory.size()) {
-                task_phase = dual_arm_phase_trajectory(traj_cnt);
+                const int next_phase = dual_arm_phase_trajectory(traj_cnt);
+                if (next_phase != task_phase) {
+                    ROS_INFO("Phase switch by trajectory: traj_cnt=%d -> phase=%d", traj_cnt, next_phase);
+                }
+                task_phase = next_phase;
             }
 
             traj_cnt++;
@@ -927,6 +983,9 @@ int main(int argc, char **argv)
                 traj_done_msg.data = true;
                 dual_armtraj_done_pub.publish(traj_done_msg);
                 traj_done_published = true;
+                if (command_mode == 3) {
+                    command_mode = -1;  // 완료된 vision pick을 자동으로 다시 시작하지 않음
+                }
             }
         }
 
@@ -980,19 +1039,50 @@ int main(int argc, char **argv)
             for (int k = 0; k < 3; k++) {
                 left_ft_force_lpf(k)  = dualarm.LowPassFilter(left_ft_force(k),  left_ft_force_before(k),  FT_LPF_CUTOFF_HZ);
                 right_ft_force_lpf(k) = dualarm.LowPassFilter(right_ft_force(k), right_ft_force_before(k), FT_LPF_CUTOFF_HZ);
+                left_ft_torque_lpf(k)  = dualarm.LowPassFilter(left_ft_torque(k),  left_ft_torque_before(k),  FT_LPF_CUTOFF_HZ);
+                right_ft_torque_lpf(k) = dualarm.LowPassFilter(right_ft_torque(k), right_ft_torque_before(k), FT_LPF_CUTOFF_HZ);
             }
             left_ft_force_before  = left_ft_force_lpf;
             right_ft_force_before = right_ft_force_lpf;
+            left_ft_torque_before  = left_ft_torque_lpf;
+            right_ft_torque_before = right_ft_torque_lpf;
 
             // F/T 센서 힘: 센서가 EE 프레임과 동일 방향으로 장착되었다고 가정하고 world frame으로 변환
             Vector3d F_ext_L = RL_actual * left_ft_force_lpf;
             Vector3d F_ext_R = RR_actual * right_ft_force_lpf;
+            if (!grasp_contact_ready) {
+                const bool left_contact_ok = std::abs(F_ext_L(1)) >= GRASP_CONTACT_FORCE_THRESHOLD;
+                const bool right_contact_ok = std::abs(F_ext_R(1)) >= GRASP_CONTACT_FORCE_THRESHOLD;
+                const bool left_face_ok =
+                    std::abs(left_ft_torque_lpf(0)) <= GRASP_FACE_CONTACT_TORQUE_THRESHOLD &&
+                    std::abs(left_ft_torque_lpf(2)) <= GRASP_FACE_CONTACT_TORQUE_THRESHOLD;
+                const bool right_face_ok =
+                    std::abs(right_ft_torque_lpf(0)) <= GRASP_FACE_CONTACT_TORQUE_THRESHOLD &&
+                    std::abs(right_ft_torque_lpf(2)) <= GRASP_FACE_CONTACT_TORQUE_THRESHOLD;
+                if (left_contact_ok && right_contact_ok && left_face_ok && right_face_ok) {
+                    grasp_contact_ticks++;
+                    if (grasp_contact_ticks >= GRASP_CONTACT_HOLD_TICKS) {
+                        grasp_contact_ready = true;
+                        ROS_INFO("Grasp face-contact ready: |Fy_L|=%.2f N |Fy_R|=%.2f N, |tau_xz_L|=[%.3f %.3f], |tau_xz_R|=[%.3f %.3f]",
+                                 std::abs(F_ext_L(1)), std::abs(F_ext_R(1)),
+                                 std::abs(left_ft_torque_lpf(0)), std::abs(left_ft_torque_lpf(2)),
+                                 std::abs(right_ft_torque_lpf(0)), std::abs(right_ft_torque_lpf(2)));
+                    }
+                } else {
+                    grasp_contact_ticks = 0;
+                    grasp_post_contact_hold_ticks = 0;
+                }
+            }
 
             Vector3d xL_adm_ddot = Vector3d::Zero();
             Vector3d xR_adm_ddot = Vector3d::Zero();
+            Vector3d F_ctrl_L = -F_ext_L;
+            Vector3d F_ctrl_R = -F_ext_R;
+            F_ctrl_L(1) = F_ext_L(1) - DESIRED_SQUEEZE_FORCE;
+            F_ctrl_R(1) = F_ext_R(1) + DESIRED_SQUEEZE_FORCE;
             for (int k = 0; k < 3; k++) {
-                xL_adm_ddot(k) = (F_ext_L(k) - Da_left[k] * left_adm_vel(k) - Ka_left[k] * left_adm_pos(k)) / Ma_left[k];
-                xR_adm_ddot(k) = (F_ext_R(k) - Da_right[k] * right_adm_vel(k) - Ka_right[k] * right_adm_pos(k)) / Ma_right[k];
+                xL_adm_ddot(k) = (F_ctrl_L(k) - Da_left[k] * left_adm_vel(k) - Ka_left[k] * left_adm_pos(k)) / Ma_left[k];
+                xR_adm_ddot(k) = (F_ctrl_R(k) - Da_right[k] * right_adm_vel(k) - Ka_right[k] * right_adm_pos(k)) / Ma_right[k];
 
                 left_adm_vel(k) += xL_adm_ddot(k) * SAMPLING_TIME;
                 right_adm_vel(k) += xR_adm_ddot(k) * SAMPLING_TIME;
@@ -1030,6 +1120,11 @@ int main(int argc, char **argv)
             left_adm_vel.setZero();
             right_adm_pos.setZero();
             right_adm_vel.setZero();
+            grasp_contact_ticks = 0;
+            grasp_post_contact_hold_ticks = 0;
+            if (task_phase != PHASE_GRASP_TO_PLACE) {
+                grasp_contact_ready = false;
+            }
         }
 
         dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);

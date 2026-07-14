@@ -35,7 +35,7 @@
     <include>
       <uri>model://aruco_box_26</uri>
       <name>aruco_box_26</name>
-      <pose>0.36 -0.05 1.08 0 0 0</pose>
+      <pose>0.40 -0.05 1.08 0 0 0</pose>
     </include>
 
     <!-- pick 지점 전용 소형 받침대: 물체 발판(10x10cm)보다 살짝 큰 12x12cm, 상판 z=1.15(기존 테이블
@@ -43,7 +43,7 @@
          접근하므로 이 작은 받침대와 충돌할 일이 없다. -->
     <model name="pick_pedestal">
       <static>true</static>
-      <pose>0.36 -0.05 0.98 0 0 0</pose>
+      <pose>0.40 -0.05 0.98 0 0 0</pose>
       <link name="link">
         <collision name="collision">
           <geometry>
