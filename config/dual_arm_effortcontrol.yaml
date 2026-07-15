@@ -1,0 +1,51 @@
+dual_arm:
+  # Publish all joint states -----------------------------------
+  joint_state_controller:
+    type: joint_state_controller/JointStateController
+    publish_rate: 1000  # 50
+  
+  # Effort Controllers ---------------------------------------
+  joint1_effort_controller:
+    type: effort_controllers/JointEffortController 
+    joint: Waist_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint2_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: L_shoulder_pitch_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint3_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: L_shoulder_roll_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint4_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: L_shoulder_yaw_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint5_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: L_elbow_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint6_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: R_shoulder_pitch_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint7_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: R_shoulder_roll_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint8_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: R_shoulder_yaw_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint9_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: R_elbow_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint10_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: Head_yaw_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint11_effort_controller:
+    type: effort_controllers/JointEffortController
+    joint: Head_pitch_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}

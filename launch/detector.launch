@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+
+ <arg name="markerId"        default="582"/>
+ <arg name="markerSize"      default="0.3"/>
+ <arg name="referenceFrame"  default="Head_camera_link_optical"/>
+
+ <node pkg="aruco_ros" type="single" name="aruco_single">
+      <remap from="/camera_info"       to="/dual_arm/head_camera/rgb/camera_info" />
+      <remap from="/image"             to="/dual_arm/head_camera/rgb/image_raw" />
+      <param name="image_is_rectified" value="true"/>
+      <param name="marker_size"        value="$(arg markerSize)"/>
+      <param name="marker_id"          value="$(arg markerId)"/>
+      <param name="reference_frame"    value="$(arg referenceFrame)"/>
+      <param name="camera_frame"       value="Head_camera_link_optical"/>
+      <param name="marker_frame"       value="aruco_frame" />
+      <param name="corner_refinement"  value="SUBPIX" />
+  </node>
+
+  <node name="rviz" pkg="rviz" type="rviz" args="" required="true" />
+
+</launch>
