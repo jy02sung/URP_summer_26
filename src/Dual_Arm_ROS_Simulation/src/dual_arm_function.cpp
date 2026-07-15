@@ -75,16 +75,16 @@ void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, Matrix
 {
 	double q_dot_des = 0.5;  // 원하는 각속도 (rad/s)
 
-	// 관절 인덱스 레이아웃: 0=waist,1=head_yaw,2=head_pitch,3~6=왼팔,7~10=오른팔
+	// 관절 인덱스 레이아웃: 0=waist,1=head_yaw,2=head_pitch,3~7=왼팔,8~12=오른팔
 	// 왼팔/오른팔 Tf를 각자의 최대 오차로 독립 계산 -> 변위가 작은 팔이 큰 팔의 Tf에 끌려가서
 	// 초반 속도가 지나치게 작아지는(=늦게 움직이는 것처럼 보이는) 문제를 제거한다.
 	// waist/head는 팔이 아니므로 셋 중 가장 긴 Tf(Tf_max)에 맞춘다.
 	double max_error_left = 0, max_error_right = 0, max_error_wh = 0;
-	for (int i = 3; i <= 6; i++) {
+	for (int i = 3; i <= 7; i++) {
 		double error = fabs(q_cmd[i] - q_ini[i]);
 		if (max_error_left < error) max_error_left = error;
 	}
-	for (int i = 7; i <= 10; i++) {
+	for (int i = 8; i <= 12; i++) {
 		double error = fabs(q_cmd[i] - q_ini[i]);
 		if (max_error_right < error) max_error_right = error;
 	}
@@ -104,8 +104,8 @@ void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, Matrix
 	// 관절별 Tf 배열 (재생은 전부 t=0에서 동시에 시작, 각자 자신의 Tf에 도달하면 그 자리에서 정지 유지)
 	double Tf[DoF];
 	Tf[0] = Tf_max; Tf[1] = Tf_max; Tf[2] = Tf_max;
-	for (int i = 3; i <= 6;  i++) Tf[i] = Tf_left;
-	for (int i = 7; i <= 10; i++) Tf[i] = Tf_right;
+	for (int i = 3; i <= 7;  i++) Tf[i] = Tf_left;
+	for (int i = 8; i <= 12; i++) Tf[i] = Tf_right;
 
 	// 전체 재생 구간(step)은 가장 긴 Tf(=Tf_max) 기준. 이보다 Tf가 짧은 관절은 도달 후 목표값 유지.
 	int step = round(Tf_max / SAMPLING_TIME_TRAJ);
@@ -190,7 +190,7 @@ void DualArmControl::PDController(double* target_q, double* current_q, double* t
 //----------------------------------- Inverse Kinematics ---------------------------------//
 ////////////////////////////////////////////////////////////////////////////////////////////
 // DLS(Damped Least Squares) arm-only IK.
-// AGENTS 제약에 맞춰 waist/head를 고정하고, 왼팔 4축(3~6) / 오른팔 4축(7~10)만 사용한다.
+// waist/head를 고정하고, 왼팔 5축(3~7) / 오른팔 5축(8~12)만 사용한다.
 // 위치 오차가 우선이며, 손끝 평면이 큐브 옆면과 더 잘 맞도록 약한 자세/방향 bias를 같이 준다.
 void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& data,
                                       pinocchio::FrameIndex l_EE, pinocchio::FrameIndex r_EE,
@@ -203,15 +203,23 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
     const int    maxIter= 300;    // 최대 반복
     const double step   = 0.6;    // 위치/방향을 같이 푸므로 기존보다 보수적으로
     const double orient_weight = 0.20;
-    const double posture_gain = 0.12;
+    const double posture_gain = 0.35;
 
     VectorXd q = q_seed;
-    const int left_arm_idx[4] = {3, 4, 5, 6};
-    const int right_arm_idx[4] = {7, 8, 9, 10};
-    Vector4d q_pref_L;
-    Vector4d q_pref_R;
-    q_pref_L << 0.80, 0.00, -0.20, -0.45;
-    q_pref_R << 0.80, 0.00,  0.20, -0.45;
+    const int left_arm_idx[ARM_DOF] = {3, 4, 5, 6, 7};
+    const int right_arm_idx[ARM_DOF] = {8, 9, 10, 11, 12};
+    constexpr int shoulder_roll_col = 1;
+    constexpr int wrist_yaw_col = 4;
+    // A strictly outward roll makes the enlarged box's side faces unreachable.
+    // Permit a small inward roll, but keep away from the old +/-0.349 rad stops.
+    constexpr double max_inward_roll = 0.15;
+    Matrix<double, ARM_DOF, 1> q_pref_L;
+    Matrix<double, ARM_DOF, 1> q_pref_R;
+    // Keep elbows outside the torso/box: positive left shoulder roll and
+    // negative right shoulder roll.  The previous zero-roll preference let
+    // the minimum-norm IK collapse both elbows inward to their joint stops.
+    q_pref_L << 0.80,  0.55, -0.20, -0.45, 0.0;
+    q_pref_R << 0.80, -0.55,  0.20, -0.45, 0.0;
     const Vector3d desired_y_axis = Vector3d::UnitY();
     const Vector3d desired_x_axis = Vector3d::UnitZ();
 
@@ -245,14 +253,18 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
         pinocchio::getFrameJacobian(model, data, l_EE, pinocchio::LOCAL_WORLD_ALIGNED, JL_full);
         pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR_full);
 
-        MatrixXd JL(6, 4);
-        MatrixXd JR(6, 4);
-        for (int col = 0; col < 4; ++col) {
+        MatrixXd JL(6, ARM_DOF);
+        MatrixXd JR(6, ARM_DOF);
+        for (int col = 0; col < ARM_DOF; ++col) {
             JL.col(col).head<3>() = JL_full.topRows<3>().col(left_arm_idx[col]);
             JL.col(col).tail<3>() = orient_weight * JL_full.bottomRows<3>().col(left_arm_idx[col]);
             JR.col(col).head<3>() = JR_full.topRows<3>().col(right_arm_idx[col]);
             JR.col(col).tail<3>() = orient_weight * JR_full.bottomRows<3>().col(right_arm_idx[col]);
         }
+        // Nominal reach IK ends at the wrist frame. Wrist yaw is reserved for
+        // passive/contact alignment and must not compensate for arm pose error.
+        JL.col(wrist_yaw_col).setZero();
+        JR.col(wrist_yaw_col).setZero();
 
         VectorXd taskErrL(6), taskErrR(6);
         taskErrL.head<3>() = eL;
@@ -268,23 +280,26 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
         VectorXd dqL = JpinvL * taskErrL;
         VectorXd dqR = JpinvR * taskErrR;
 
-        Vector4d qL_cur, qR_cur;
-        for (int i = 0; i < 4; ++i) {
+        Matrix<double, ARM_DOF, 1> qL_cur, qR_cur;
+        for (int i = 0; i < ARM_DOF; ++i) {
             qL_cur(i) = q(left_arm_idx[i]);
             qR_cur(i) = q(right_arm_idx[i]);
         }
-        Matrix4d NL = Matrix4d::Identity() - JpinvL * JL;
-        Matrix4d NR = Matrix4d::Identity() - JpinvR * JR;
+        MatrixXd NL = MatrixXd::Identity(ARM_DOF, ARM_DOF) - JpinvL * JL;
+        MatrixXd NR = MatrixXd::Identity(ARM_DOF, ARM_DOF) - JpinvR * JR;
         dqL += NL * (posture_gain * (q_pref_L - qL_cur));
         dqR += NR * (posture_gain * (q_pref_R - qR_cur));
 
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < ARM_DOF; ++i) {
             q(left_arm_idx[i]) += step * dqL(i);
             q(right_arm_idx[i]) += step * dqR(i);
         }
 
+        q(left_arm_idx[wrist_yaw_col]) = q_seed(left_arm_idx[wrist_yaw_col]);
+        q(right_arm_idx[wrist_yaw_col]) = q_seed(right_arm_idx[wrist_yaw_col]);
+
         // 팔 관절 한계만 클램핑 - waist/head는 seed 값 유지
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < ARM_DOF; ++i) {
             int l_idx = left_arm_idx[i];
             int r_idx = right_arm_idx[i];
             q(l_idx) = std::min(std::max(q(l_idx), model.lowerPositionLimit(l_idx)),
@@ -292,12 +307,15 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
             q(r_idx) = std::min(std::max(q(r_idx), model.lowerPositionLimit(r_idx)),
                                 model.upperPositionLimit(r_idx));
         }
+        // Reject the inward-elbow branch instead of relying on a weak
+        // null-space preference that can be overridden by position error.
+        q(left_arm_idx[shoulder_roll_col]) =
+            std::max(q(left_arm_idx[shoulder_roll_col]), -max_inward_roll);
+        q(right_arm_idx[shoulder_roll_col]) =
+            std::min(q(right_arm_idx[shoulder_roll_col]), max_inward_roll);
 
         for (int i = 0; i < 3; ++i)
             q(i) = q_seed(i);
-        for (int i = 11; i < model.nq; ++i)
-            q(i) = std::min(std::max(q(i), model.lowerPositionLimit(i)),
-                            model.upperPositionLimit(i));
     }
 
     q_out = q;

@@ -1,5 +1,4 @@
 <launch>
-  <!-- these are the arguments you can pass this launch file, for example paused:=true -->
   <arg name="paused" default="false"/>
   <arg name="use_sim_time" default="true"/>
   <arg name="gui" default="true"/>
@@ -8,7 +7,6 @@
   <arg name="spawn_delay" default="8.0"/>
   <arg name="pose_settle_delay" default="2.0"/>
 
-  <!-- We resume the logic in empty_world.launch, changing only the name of the world to be launched -->
   <include file="$(find gazebo_ros)/launch/empty_world.launch">
     <arg name="world_name" value="$(find dual_arm)/worlds/rrbot.world"/>
     <arg name="debug" value="$(arg debug)" />
@@ -18,15 +16,12 @@
     <arg name="headless" value="$(arg headless)"/>
   </include>
 
-  <!-- ros_control rrbot launch file -->
   <include file="$(find dual_arm)/launch/dual_arm_control.launch" />
   <include file="$(find dual_arm)/launch/aruco_detection.launch" />
 
-  <!-- Load the URDF into the ROS Parameter Server -->
   <param name="robot_description"
     command="$(find xacro)/xacro --inorder '$(find dual_arm)/urdf/dual_arm.xacro'" />
 
-  <!-- Run a python script to the send a service call to gazebo_ros to spawn a URDF robot -->
   <node name="urdf_spawner" pkg="dual_arm" type="spawn_dual_arm_model.sh" respawn="false" output="screen"
     args="$(arg spawn_delay) dual_arm $(find dual_arm)/urdf/dual_arm.urdf"/>
 
@@ -35,7 +30,4 @@
     <param name="urdf_param_name" value="robot_description"/>
     <param name="settle_delay" value="$(arg pose_settle_delay)"/>
   </node>
-  
-  <node pkg="dual_arm" type="dual_arm_main" name="main" output="screen"/>
-
 </launch>

@@ -1,0 +1,26 @@
+<launch>
+  <!-- Isolate the current launch/control stack with the last stable 11-DoF model. -->
+  <arg name="paused" default="false"/>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="gui" default="true"/>
+  <arg name="headless" default="false"/>
+  <arg name="debug" default="false"/>
+  <arg name="spawn_delay" default="2.0"/>
+
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(find dual_arm)/worlds/rrbot.world"/>
+    <arg name="debug" value="$(arg debug)"/>
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="headless" value="$(arg headless)"/>
+  </include>
+
+  <include file="$(find dual_arm)/launch/dual_arm_control_no_wrist.launch"/>
+
+  <param name="robot_description"
+    command="$(find xacro)/xacro --inorder '/home/jys/catkin_ws_jmp/src/urp_summer_26/urdf/dual_arm.xacro'"/>
+
+  <node name="urdf_spawner" pkg="dual_arm" type="spawn_dual_arm_model.sh" respawn="false" output="screen"
+    args="$(arg spawn_delay) dual_arm /home/jys/catkin_ws_jmp/src/urp_summer_26/urdf/dual_arm.urdf"/>
+</launch>

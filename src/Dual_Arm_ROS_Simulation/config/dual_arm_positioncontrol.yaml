@@ -1,12 +1,10 @@
 dual_arm:
-  # Publish all joint states -----------------------------------
   joint_state_controller:
     type: joint_state_controller/JointStateController
-    publish_rate: 1000  # 50
-  
-  # Position Controllers ---------------------------------------
+    publish_rate: 1000
+
   joint1_position_controller:
-    type: position_controllers/JointPositionController 
+    type: position_controllers/JointPositionController
     joint: Waist_joint
     pid: {p: 100.0, i: 0.01, d: 10.0}
   joint2_position_controller:
@@ -27,25 +25,33 @@ dual_arm:
     pid: {p: 100.0, i: 0.01, d: 10.0}
   joint6_position_controller:
     type: position_controllers/JointPositionController
-    joint: R_shoulder_pitch_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
+    joint: L_wrist_yaw_joint
+    pid: {p: 40.0, i: 0.01, d: 4.0}
   joint7_position_controller:
     type: position_controllers/JointPositionController
-    joint: R_shoulder_roll_joint
+    joint: R_shoulder_pitch_joint
     pid: {p: 100.0, i: 0.01, d: 10.0}
   joint8_position_controller:
     type: position_controllers/JointPositionController
-    joint: R_shoulder_yaw_joint
+    joint: R_shoulder_roll_joint
     pid: {p: 100.0, i: 0.01, d: 10.0}
   joint9_position_controller:
     type: position_controllers/JointPositionController
-    joint: R_elbow_joint
+    joint: R_shoulder_yaw_joint
     pid: {p: 100.0, i: 0.01, d: 10.0}
   joint10_position_controller:
     type: position_controllers/JointPositionController
-    joint: Head_yaw_joint
+    joint: R_elbow_joint
     pid: {p: 100.0, i: 0.01, d: 10.0}
   joint11_position_controller:
+    type: position_controllers/JointPositionController
+    joint: R_wrist_yaw_joint
+    pid: {p: 40.0, i: 0.01, d: 4.0}
+  joint12_position_controller:
+    type: position_controllers/JointPositionController
+    joint: Head_yaw_joint
+    pid: {p: 100.0, i: 0.01, d: 10.0}
+  joint13_position_controller:
     type: position_controllers/JointPositionController
     joint: Head_pitch_joint
     pid: {p: 100.0, i: 0.01, d: 10.0}

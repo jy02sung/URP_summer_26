@@ -34,7 +34,9 @@
             joint8_effort_controller
             joint9_effort_controller
             joint10_effort_controller
-            joint11_effort_controller"/>
+            joint11_effort_controller
+            joint12_effort_controller
+            joint13_effort_controller"/>
             
 
   <!-- convert joint states to TF transforms for rviz, etc -->

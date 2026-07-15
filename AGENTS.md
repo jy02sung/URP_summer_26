@@ -74,3 +74,55 @@ Implement and debug humanoid upper-body control so the robot:
 - Reworked the main loop so nominal trajectory acceleration is built first, then the final joint target
   after admittance correction is passed through PD + RNEA.
 - Rebuilt with `catkin_make` after the control changes.
+
+## Work Log - 2026-07-14
+
+- Began wrist DoF expansion from 11DoF to 15DoF by adding bilateral wrist yaw/pitch joints.
+- Updated Pinocchio/control indexing consistently to:
+  waist, head yaw, head pitch, left shoulder/elbow/wrist(6), right shoulder/elbow/wrist(6).
+- Extended `main.cpp`, `dual_arm_function.cpp`, controller YAMLs, and `dual_arm_control.launch`
+  to publish/load 15 effort controllers and to map `/dual_arm/joint_states` using the new alphabetical order.
+- Added `L_wrist_yaw_joint`, `L_wrist_pitch_joint`, `R_wrist_yaw_joint`, `R_wrist_pitch_joint`
+  into `dual_arm.xacro`, reparenting `L_EE_joint` / `R_EE_joint` under wrist pitch links so the F/T sensor joints remain intact.
+- Regenerated `urdf/dual_arm.urdf` from xacro and rebuilt successfully with `catkin_make`.
+- Gazebo test status:
+  the robot spawns, all 15 controllers load, and `/dual_arm/joint_states/name` includes the four wrist joints,
+  but the simulated `dual_arm` model still reports invalid dynamics (`/gazebo/model_states` twist = `nan`)
+  and wrist-added startup is not yet physically stable.
+- Current likely next step:
+  isolate whether the instability comes from the new wrist link inertias/collision geometry
+  or from the torque controller path by launching once with the wrist URDF but without `dual_arm_main` torque output.
+
+## Work Log - 2026-07-14 Night Follow-up
+
+- Rolled back from the unstable 15DoF wrist yaw+pitch attempt to a 13DoF yaw-only wrist variant:
+  waist, head yaw, head pitch, left arm(shoulder pitch/roll/yaw, elbow, wrist yaw),
+  right arm(shoulder pitch/roll/yaw, elbow, wrist yaw).
+- Updated `main.cpp`, `dual_arm_function.cpp`, `dual_arm_function.h`, controller YAMLs,
+  and `dual_arm_control.launch` for 13 controllers and 5-DoF-per-arm indexing.
+- Confirmed with `xacro`/URDF checks that the yaw-only model parses and spawns successfully.
+- Added diagnostic launch files:
+  `launch/gazebo_spawn_only.launch` for pure spawn testing and
+  `launch/gazebo_no_main.launch` for spawn + ros_control without `dual_arm_main`.
+- Important diagnosis result:
+  the current issue is not primarily caused by `dual_arm_main`.
+  Even with `gazebo_spawn_only.launch` or `gazebo_no_main.launch`, the model/controller state is already inconsistent.
+- Observed inconsistency:
+  `/gazebo/get_joint_properties` and `/dual_arm/joint_states` disagree right after spawn.
+  Example from fresh launch:
+  `L_shoulder_pitch_joint` and `R_shoulder_pitch_joint` read about `1.600958 rad` from Gazebo,
+  while `/dual_arm/joint_states` reports wrapped/offset values such as `7.884144`, `-4.682226`,
+  elbow `-2*pi`, and wrist `+2*pi`.
+- Observed startup drift before main control:
+  spawn target for shoulder pitch was `0.80 rad`, but actual Gazebo joint properties moved to about `1.60 rad`
+  before `dual_arm_main` startup hold became relevant.
+- Because the same symptom appears without `dual_arm_main`, current first-priority suspicion is
+  model/physics-side startup behavior in the modified arm/wrist chain, not the task logic.
+- Existing FT sensor / fixed-joint feedback blocks were already present in the earlier version;
+  the most meaningful structural change in the unstable path is the wrist-link insertion and its reparented EE chain.
+- Fresh GUI session was relaunched after killing stale `roslaunch`, `gzserver`, `gzclient`, `roscore`,
+  and related test processes so the current on-screen Gazebo window corresponds to the latest launch.
+- Best next debugging steps:
+  1. spawn with `paused:=true` and inspect pure pre-physics initial pose,
+  2. unpause and identify which joint/link first deviates from the requested `-J` pose,
+  3. compare the yaw-only wrist chain against the last stable no-wrist model at the URDF joint/inertia level.

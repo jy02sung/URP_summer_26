@@ -2,6 +2,8 @@
 #include <ros/package.h>
 #include <tf/transform_listener.h>
 #include <vector>
+#include <algorithm>
+#include <limits>
 #include <gazebo_msgs/SpawnModel.h>
 #include <gazebo_msgs/DeleteModel.h>
 #include <gazebo_msgs/ModelState.h>
@@ -18,12 +20,12 @@ const string PLACE_INDICATOR_SDF = R"(
     <static>true</static>
     <link name="link">
       <collision name="pedestal_collision">
-        <pose>0 0 -0.10 0 0 0</pose>
-        <geometry><box><size>0.12 0.12 0.10</size></box></geometry>
+        <pose>0 0 -0.15 0 0 0</pose>
+        <geometry><box><size>0.12 0.36 0.10</size></box></geometry>
       </collision>
       <visual name="pedestal_visual">
-        <pose>0 0 -0.10 0 0 0</pose>
-        <geometry><box><size>0.12 0.12 0.10</size></box></geometry>
+        <pose>0 0 -0.15 0 0 0</pose>
+        <geometry><box><size>0.12 0.36 0.10</size></box></geometry>
         <material>
           <ambient>0.2 0.8 0.2 1</ambient>
           <diffuse>0.2 0.8 0.2 1</diffuse>
@@ -93,82 +95,126 @@ int scan_pitch_index = 0;
 const double STARTUP_WAIST = 0.0;
 const double STARTUP_HEAD_YAW = 0.0;
 const double STARTUP_HEAD_PITCH = 0.0;
-const double STARTUP_L_SHOULDER_PITCH = 0.68;
+const double STARTUP_L_SHOULDER_PITCH = 0.0;
 const double STARTUP_L_SHOULDER_ROLL = 0.0;
-const double STARTUP_L_SHOULDER_YAW = -0.20;
-const double STARTUP_L_ELBOW = -0.45;
-const double STARTUP_R_SHOULDER_PITCH = 0.68;
+const double STARTUP_L_SHOULDER_YAW = 0.0;
+const double STARTUP_L_ELBOW = 0.0;
+const double STARTUP_L_WRIST_YAW = 0.0;
+const double STARTUP_R_SHOULDER_PITCH = 0.0;
 const double STARTUP_R_SHOULDER_ROLL = 0.0;
-const double STARTUP_R_SHOULDER_YAW = 0.20;
-const double STARTUP_R_ELBOW = -0.45;
+const double STARTUP_R_SHOULDER_YAW = 0.0;
+const double STARTUP_R_ELBOW = 0.0;
+const double STARTUP_R_WRIST_YAW = 0.0;
 const int STARTUP_HOLD_TICKS = 1000;           // 1.0s @ 1000Hz
 const double STARTUP_MOVE_DURATION = 3.0;      // [s] 초기 자세로 천천히 이동
 const double STARTUP_SETTLE_VEL_NORM = 0.35;   // [rad/s]
+
+double finiteOrZero(double value)
+{
+    return std::isfinite(value) ? value : 0.0;
+}
+
+double wrapToJointRange(double value, double lower, double upper)
+{
+    if (!std::isfinite(value)) {
+        return 0.0;
+    }
+
+    const double two_pi = 2.0 * M_PI;
+    const double mid = 0.5 * (lower + upper);
+    double best = value;
+    double best_cost = std::numeric_limits<double>::infinity();
+
+    for (int k = -2; k <= 2; ++k) {
+        double cand = value + k * two_pi;
+        double range_error = 0.0;
+        if (cand < lower) range_error = lower - cand;
+        else if (cand > upper) range_error = cand - upper;
+
+        const double center_error = std::abs(cand - mid);
+        const double cost = 100.0 * range_error + center_error;
+        if (cost < best_cost) {
+            best_cost = cost;
+            best = cand;
+        }
+    }
+
+    return best;
+}
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // 콜백 함수들 (현재 조인트 상태 업데이트용)
 // /dual_arm/joint_states 의 name 배열은 조인트 이름 알파벳순으로 정렬되어 온다(실측 확인).
 // Head_pitch_joint(0) < Head_yaw_joint(1) < L_elbow_joint(2) < L_shoulder_pitch_joint(3) <
-// L_shoulder_roll_joint(4) < L_shoulder_yaw_joint(5) < R_elbow_joint(6) < R_shoulder_pitch_joint(7) <
-// R_shoulder_roll_joint(8) < R_shoulder_yaw_joint(9) < Waist_joint(10)
+// L_shoulder_roll_joint(4) < L_shoulder_yaw_joint(5) < L_wrist_yaw_joint(6) <
+// R_elbow_joint(7) < R_shoulder_pitch_joint(8) < R_shoulder_roll_joint(9) < R_shoulder_yaw_joint(10) <
+// R_wrist_yaw_joint(11) < Waist_joint(12)
 void msgCallbackWaistArmJointState(const sensor_msgs::JointState::ConstPtr& msg)
     {
         waist_state_received = true;
-        waist_jointp[0] = msg->position[10];
-        waist_jointv[0] = msg->velocity[10];
-        waist_torque[0] = msg->effort[10];
+        waist_jointp[0] = wrapToJointRange(msg->position[12], -0.87, 0.87);
+        waist_jointv[0] = finiteOrZero(msg->velocity[12]);
+        waist_torque[0] = finiteOrZero(msg->effort[12]);
     }
 
 void msgCallbackHeadJointState(const sensor_msgs::JointState::ConstPtr& msg)
     {
         head_state_received = true;
-        head_jointp[0] = msg->position[1];   // yaw
-        head_jointv[0] = msg->velocity[1];
-        head_torque[0] = msg->effort[1];
+        head_jointp[0] = wrapToJointRange(msg->position[1], -1.2217, 1.2217);   // yaw
+        head_jointv[0] = finiteOrZero(msg->velocity[1]);
+        head_torque[0] = finiteOrZero(msg->effort[1]);
 
-        head_jointp[1] = msg->position[0];   // pitch
-        head_jointv[1] = msg->velocity[0];
-        head_torque[1] = msg->effort[0];
+        head_jointp[1] = wrapToJointRange(msg->position[0], -0.5236, 1.0472);   // pitch
+        head_jointv[1] = finiteOrZero(msg->velocity[0]);
+        head_torque[1] = finiteOrZero(msg->effort[0]);
     }
 
 void msgCallbackLeftArmJointState(const sensor_msgs::JointState::ConstPtr& msg)
     {
         left_arm_state_received = true;
-        left_arm_jointp[0] = msg->position[3];
-        left_arm_jointv[0] = msg->velocity[3];
-        left_arm_torque[0] = msg->effort[3];
+        left_arm_jointp[0] = wrapToJointRange(msg->position[3], -3.14, 1.05);
+        left_arm_jointv[0] = finiteOrZero(msg->velocity[3]);
+        left_arm_torque[0] = finiteOrZero(msg->effort[3]);
 
-        left_arm_jointp[1] = msg->position[4];
-        left_arm_jointv[1] = msg->velocity[4];
-        left_arm_torque[1] = msg->effort[4];
+        left_arm_jointp[1] = wrapToJointRange(msg->position[4], -0.349, 2.62);
+        left_arm_jointv[1] = finiteOrZero(msg->velocity[4]);
+        left_arm_torque[1] = finiteOrZero(msg->effort[4]);
 
-        left_arm_jointp[2] = msg->position[5];
-        left_arm_jointv[2] = msg->velocity[5];
-        left_arm_torque[2] = msg->effort[5];
+        left_arm_jointp[2] = wrapToJointRange(msg->position[5], -1.57, 1.57);
+        left_arm_jointv[2] = finiteOrZero(msg->velocity[5]);
+        left_arm_torque[2] = finiteOrZero(msg->effort[5]);
 
-        left_arm_jointp[3] = msg->position[2];
-        left_arm_jointv[3] = msg->velocity[2];
-        left_arm_torque[3] = msg->effort[2];
+        left_arm_jointp[3] = wrapToJointRange(msg->position[2], -1.9, 1.05);
+        left_arm_jointv[3] = finiteOrZero(msg->velocity[2]);
+        left_arm_torque[3] = finiteOrZero(msg->effort[2]);
+
+        left_arm_jointp[4] = wrapToJointRange(msg->position[6], -0.9, 0.9);
+        left_arm_jointv[4] = finiteOrZero(msg->velocity[6]);
+        left_arm_torque[4] = finiteOrZero(msg->effort[6]);
     }
 
 void msgCallbackRightArmJointState(const sensor_msgs::JointState::ConstPtr& msg)
     {
         right_arm_state_received = true;
-        right_arm_jointp[0] = msg->position[7];
-        right_arm_jointv[0] = msg->velocity[7];
-        right_arm_torque[0] = msg->effort[7];
+        right_arm_jointp[0] = wrapToJointRange(msg->position[8], -3.14, 1.05);
+        right_arm_jointv[0] = finiteOrZero(msg->velocity[8]);
+        right_arm_torque[0] = finiteOrZero(msg->effort[8]);
 
-        right_arm_jointp[1] = msg->position[8];
-        right_arm_jointv[1] = msg->velocity[8];
-        right_arm_torque[1] = msg->effort[8];
+        right_arm_jointp[1] = wrapToJointRange(msg->position[9], -2.62, 0.349);
+        right_arm_jointv[1] = finiteOrZero(msg->velocity[9]);
+        right_arm_torque[1] = finiteOrZero(msg->effort[9]);
 
-        right_arm_jointp[2] = msg->position[9];
-        right_arm_jointv[2] = msg->velocity[9];
-        right_arm_torque[2] = msg->effort[9];
+        right_arm_jointp[2] = wrapToJointRange(msg->position[10], -1.57, 1.57);
+        right_arm_jointv[2] = finiteOrZero(msg->velocity[10]);
+        right_arm_torque[2] = finiteOrZero(msg->effort[10]);
 
-        right_arm_jointp[3] = msg->position[6];
-        right_arm_jointv[3] = msg->velocity[6];
-        right_arm_torque[3] = msg->effort[6];
+        right_arm_jointp[3] = wrapToJointRange(msg->position[7], -1.9, 1.05);
+        right_arm_jointv[3] = finiteOrZero(msg->velocity[7]);
+        right_arm_torque[3] = finiteOrZero(msg->effort[7]);
+
+        right_arm_jointp[4] = wrapToJointRange(msg->position[11], -0.9, 0.9);
+        right_arm_jointv[4] = finiteOrZero(msg->velocity[11]);
+        right_arm_torque[4] = finiteOrZero(msg->effort[11]);
     }
 
 // F/T 센서 콜백 (어드미턴스 제어의 F_ext로 사용)
@@ -249,6 +295,8 @@ int main(int argc, char **argv)
         ros::Publisher dual_armjoint9_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint9_position_controller/command", 100);
         ros::Publisher dual_armjoint10_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint10_position_controller/command", 100);
         ros::Publisher dual_armjoint11_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint11_position_controller/command", 100);
+        ros::Publisher dual_armjoint12_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint12_position_controller/command", 100);
+        ros::Publisher dual_armjoint13_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint13_position_controller/command", 100);
 
     //Effort Control
     #elif ARMCTRLMODE == EFFORT
@@ -263,6 +311,8 @@ int main(int argc, char **argv)
         ros::Publisher dual_armjoint9_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint9_effort_controller/command", 100);
         ros::Publisher dual_armjoint10_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint10_effort_controller/command", 100);
         ros::Publisher dual_armjoint11_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint11_effort_controller/command", 100);
+        ros::Publisher dual_armjoint12_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint12_effort_controller/command", 100);
+        ros::Publisher dual_armjoint13_pub = nh.advertise<std_msgs::Float64>("/dual_arm/joint13_effort_controller/command", 100);
 
     #endif
 
@@ -306,14 +356,14 @@ int main(int argc, char **argv)
         spawn_model_client.call(spawn_srv);
     };
 
-    ros::Rate loop_rate(1000);
+    ros::WallRate loop_rate(1000);
     ros::spinOnce();
     
     // 조인트 명령 메시지 객체 선언
     std_msgs::Float64 waist_joint_msg;
     std_msgs::Float64 head_yaw_joint_msg, head_pitch_joint_msg;
-    std_msgs::Float64 shoulder_pitch_l_joint_msg, shoulder_roll_l_joint_msg, shoulder_yaw_l_joint_msg, elbow_l_joint_msg;
-    std_msgs::Float64 shoulder_pitch_r_joint_msg, shoulder_roll_r_joint_msg, shoulder_yaw_r_joint_msg, elbow_r_joint_msg;
+    std_msgs::Float64 shoulder_pitch_l_joint_msg, shoulder_roll_l_joint_msg, shoulder_yaw_l_joint_msg, elbow_l_joint_msg, wrist_yaw_l_joint_msg;
+    std_msgs::Float64 shoulder_pitch_r_joint_msg, shoulder_roll_r_joint_msg, shoulder_yaw_r_joint_msg, elbow_r_joint_msg, wrist_yaw_r_joint_msg;
 
     // 고정된 URDF 파일 경로 사용
     string urdf_filename = ros::package::getPath("dual_arm") + "/urdf/dual_arm.urdf";
@@ -322,9 +372,14 @@ int main(int argc, char **argv)
     pinocchio::urdf::buildModel(urdf_filename, model);
     pinocchio::Data data(model);
 
-    // ===== 추가: EE 프레임 ID는 불변이므로 루프 밖에서 한 번만 구함 =====
-    pinocchio::FrameIndex l_EE = model.getFrameId("L_EE_joint");
-    pinocchio::FrameIndex r_EE = model.getFrameId("R_EE_joint");
+    // IK는 wrist 아래 frame으로 arm pose를 풀고, grasp/contact 목표와 Jacobian은
+    // collision pad의 실제 중심 frame을 사용한다.
+    pinocchio::FrameIndex l_ik_EE = model.getFrameId("L_wrist_ik_joint");
+    pinocchio::FrameIndex r_ik_EE = model.getFrameId("R_wrist_ik_joint");
+    pinocchio::FrameIndex l_nominal_EE = model.getFrameId("L_EE_joint");
+    pinocchio::FrameIndex r_nominal_EE = model.getFrameId("R_EE_joint");
+    pinocchio::FrameIndex l_contact_EE = model.getFrameId("L_grip_joint");
+    pinocchio::FrameIndex r_contact_EE = model.getFrameId("R_grip_joint");
 
     dual_arm_jointp_trajectory.resize(1, DoF);
     dual_arm_jointv_trajectory.resize(1, DoF);
@@ -339,14 +394,16 @@ int main(int argc, char **argv)
         STARTUP_L_SHOULDER_ROLL,
         STARTUP_L_SHOULDER_YAW,
         STARTUP_L_ELBOW,
+        STARTUP_L_WRIST_YAW,
         STARTUP_R_SHOULDER_PITCH,
         STARTUP_R_SHOULDER_ROLL,
         STARTUP_R_SHOULDER_YAW,
-        STARTUP_R_ELBOW;
+        STARTUP_R_ELBOW,
+        STARTUP_R_WRIST_YAW;
 
-    enum StartupState { STARTUP_WAIT_FOR_STATE, STARTUP_HOLD_CURRENT, STARTUP_MOVE_TO_TARGET, STARTUP_COMPLETE };
+    enum StartupState { STARTUP_WAIT_FOR_STATE, STARTUP_MOVE_TO_TARGET, STARTUP_COMPLETE };
     StartupState startup_state = STARTUP_WAIT_FOR_STATE;
-    int startup_hold_cnt = 0;
+    bool startup_zero_state_assumed = false;
     double startup_hold_q[DoF] = {0.0,};
     double startup_target_q[DoF] = {
         STARTUP_WAIST,
@@ -356,10 +413,12 @@ int main(int argc, char **argv)
         STARTUP_L_SHOULDER_ROLL,
         STARTUP_L_SHOULDER_YAW,
         STARTUP_L_ELBOW,
+        STARTUP_L_WRIST_YAW,
         STARTUP_R_SHOULDER_PITCH,
         STARTUP_R_SHOULDER_ROLL,
         STARTUP_R_SHOULDER_YAW,
-        STARTUP_R_ELBOW
+        STARTUP_R_ELBOW,
+        STARTUP_R_WRIST_YAW
     };
 
     // ===== Head 자동 스캔: 다음 웨이포인트로 Head만 이동시키는 단일 세그먼트를 만들어 재생 준비 =====
@@ -427,6 +486,23 @@ int main(int argc, char **argv)
         }
     };
 
+    auto mapContactTargetsToIkTargets = [&](const VectorXd& q_ref,
+                                           const Vector3d& contact_target_L, const Vector3d& contact_target_R,
+                                           Vector3d& ik_target_L, Vector3d& ik_target_R) {
+        pinocchio::forwardKinematics(model, data, q_ref);
+        pinocchio::updateFramePlacements(model, data);
+
+        // Nominal trajectories remain wrist/EE based.  The grip-pad frame is
+        // reserved for contact sensing and admittance after squeeze begins.
+        const Vector3d left_nominal_offset =
+            data.oMf[l_nominal_EE].translation() - data.oMf[l_ik_EE].translation();
+        const Vector3d right_nominal_offset =
+            data.oMf[r_nominal_EE].translation() - data.oMf[r_ik_EE].translation();
+
+        ik_target_L = contact_target_L - left_nominal_offset;
+        ik_target_R = contact_target_R - right_nominal_offset;
+    };
+
     // ===== Head 스캔으로 확정된 검출 결과로 기존 양팔 파지 파이프라인(접근~복귀 6세그먼트)을 생성 =====
     // base_q: 파이프라인 시작 시점의 "현재 관절각"(waist/양팔은 스캔 시작 시점 값, head는 스캔이 멈춘 실제 웨이포인트).
     // 반환값 false면 TF 변환 실패 -> 궤적 생성 안 됨(호출부에서 실패 처리).
@@ -451,52 +527,54 @@ int main(int argc, char **argv)
         //  경우엔 world-frame 고정 오프셋이 orientation 기반 보정보다 더 안정적이다.)
         // (이 보정 없이 마커 위치를 그대로 물체 중심으로 쓰면 grasp_offset=4.5cm 스퀴즈가 실제 박스 표면을
         //  몇 cm씩 빗나가 파지가 전혀 안 되는 문제가 있었음 - 실측으로 확인.)
-        const double MARKER_TO_BOX_CENTER = 0.0505;
+        const double MARKER_TO_BOX_CENTER = 0.1005;
 
         Vector3d obj = Vector3d(object_world.pose.position.x,
                                  object_world.pose.position.y,
                                  object_world.pose.position.z)
                        + Vector3d(0, 0, -MARKER_TO_BOX_CENTER);
+        obj.y() += 0.023;  // 반복 측정된 ArUco world-Y 편향(-2.3cm) 보정
         Vector3d transport_pt(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
 
         // 큐브 면 기준 파지 목표 생성:
         // - 좌/우 손은 큐브의 +Y / -Y face center를 향한다.
         // - 초기 contact는 face에서 약간 바깥쪽, final squeeze는 face 안쪽으로 소폭 침투시켜
         //   손바닥 면이 큐브 면에 맞닿은 뒤 더 조이도록 만든다.
-        const double BOX_HALF_Y = 0.050;
+        // - startup은 차렷으로 유지하고, 실제 접근은 먼저 큐브 위 high pregrasp로 올린 뒤
+        //   수직 하강으로 바꿔 초기 raised-arm 불안정을 피한다.
+        const double BOX_HALF_Y = 0.160;
         const double CONTACT_X_BIAS = -0.020;     // 몸쪽(-x)으로 더 당겨 손이 큐브 앞쪽이 아니라 옆면 중앙을 잡게 함
-        const double CONTACT_Z_BIAS = -0.055;     // 중심보다 더 아래를 잡아 lift 때 받쳐들기 유리하게
+        const double CONTACT_Z_BIAS = -0.070;     // 시각 확인 결과 패드 접촉점을 추가로 3cm 아래로 보정
         const double CONTACT_FACE_INSET = 0.008;  // 첫 접촉 시 face 안쪽 침투량 [m]
-        const double SQUEEZE_FACE_INSET = 0.016;  // final squeeze 침투량 [m]
+        const double SQUEEZE_FACE_INSET = 0.028;  // 양쪽 grip pad가 큐브 면에 확실히 닿도록 손당 12mm 추가 squeeze
+        const double ARM_RAISE_Z = 0.16;          // 차렷 후 먼저 제자리에서 들어올릴 높이 [m]
+        const double ARM_RAISE_OUTWARD_Y = 0.05;  // 들어올릴 때 몸통과 팔 간섭을 줄이기 위한 바깥쪽 여유 [m]
+        const double PREGRASP_HIGH_Z = 0.18;      // 큐브 위쪽 safe pregrasp 높이 [m]
+        const double PREGRASP_WIDE_Y = 0.16;      // 넓어진 박스 접근 전 양팔을 더 벌림 [m]
 
         VectorXd base_seed(DoF);
         for (int i = 0; i < DoF; i++) base_seed(i) = base_q[i];
 
         pinocchio::forwardKinematics(model, data, base_seed);
         pinocchio::updateFramePlacements(model, data);
-        Vector3d start_L = data.oMf[l_EE].translation();
-        Vector3d start_R = data.oMf[r_EE].translation();
+        Vector3d start_L = data.oMf[l_contact_EE].translation();
+        Vector3d start_R = data.oMf[r_contact_EE].translation();
 
         // 물체/이송목표의 좌우 face center 기반 목표점
         Vector3d objL = obj + Vector3d(CONTACT_X_BIAS,  BOX_HALF_Y - CONTACT_FACE_INSET, CONTACT_Z_BIAS);
         Vector3d objR = obj + Vector3d(CONTACT_X_BIAS, -BOX_HALF_Y + CONTACT_FACE_INSET, CONTACT_Z_BIAS);
         Vector3d squeezeL = obj + Vector3d(CONTACT_X_BIAS,  BOX_HALF_Y - SQUEEZE_FACE_INSET, CONTACT_Z_BIAS);
         Vector3d squeezeR = obj + Vector3d(CONTACT_X_BIAS, -BOX_HALF_Y + SQUEEZE_FACE_INSET, CONTACT_Z_BIAS);
+        Vector3d armRaiseL = start_L + Vector3d(0,  ARM_RAISE_OUTWARD_Y, ARM_RAISE_Z);
+        Vector3d armRaiseR = start_R + Vector3d(0, -ARM_RAISE_OUTWARD_Y, ARM_RAISE_Z);
+        Vector3d pregraspHighWideL = objL + Vector3d(0,  PREGRASP_WIDE_Y, PREGRASP_HIGH_Z);
+        Vector3d pregraspHighWideR = objR + Vector3d(0, -PREGRASP_WIDE_Y, PREGRASP_HIGH_Z);
+        Vector3d pregraspHighAlignL = objL + Vector3d(0, 0, PREGRASP_HIGH_Z);
+        Vector3d pregraspHighAlignR = objR + Vector3d(0, 0, PREGRASP_HIGH_Z);
         Vector3d transportL = transport_pt + Vector3d(CONTACT_X_BIAS,  BOX_HALF_Y - SQUEEZE_FACE_INSET, CONTACT_Z_BIAS);
         Vector3d transportR = transport_pt + Vector3d(CONTACT_X_BIAS, -BOX_HALF_Y + SQUEEZE_FACE_INSET, CONTACT_Z_BIAS);
         Vector3d releaseL = transport_pt + Vector3d(CONTACT_X_BIAS,  BOX_HALF_Y + 0.035, CONTACT_Z_BIAS);
         Vector3d releaseR = transport_pt + Vector3d(CONTACT_X_BIAS, -BOX_HALF_Y - 0.035, CONTACT_Z_BIAS);
-
-        // pick_pedestal(world 파일)이 파지점 바로 아래(z 1.05~1.15)에 y로 걸쳐 있어서, 시작 자세에서
-        // objL/R로 곧장 3D 직선 이동하면 z가 받침대 상판보다 낮은 구간에서 x,y가 이미 받침대 영역에
-        // 들어가 팔이 모서리에 부딪힌다. 그래서 접근을 2단계로 나눈다: 먼저 파지 높이(obj.z, 받침대
-        // 상판보다 5cm 위)를 유지한 채 받침대 바깥쪽으로 STANDOFF_Y만큼 더 벌어진 standoff 지점으로
-        // 이동하고, 그다음 그 높이를 유지한 채 y 방향으로만 직선 이동해 파지점에 들어간다 - 마지막
-        // 구간은 항상 받침대보다 높은 높이에서만 움직이므로 부딪힐 수 없다.
-        const double STANDOFF_Y = 0.15;   // 받침대 y 반폭(0.06)보다 충분히 큰 여유
-        const double STANDOFF_Z_LIFT = 0.03; // 첫 진입은 파지점보다 조금 더 높게 들어가 모서리 걸림 방지
-        Vector3d standoffL = objL + Vector3d(0, STANDOFF_Y, STANDOFF_Z_LIFT);
-        Vector3d standoffR = objR + Vector3d(0, -STANDOFF_Y, STANDOFF_Z_LIFT);
 
         // 파지 직후 곧바로 파지점->이송목표 대각선 직선으로 이동하면 받침대/바닥 근처를 스치듯 지나갈
         // 수 있다. 스퀴즈를 유지한 채(PHASE_GRASP_TO_PLACE) 먼저 수직으로 LIFT_HEIGHT만큼 들어올린 뒤,
@@ -531,7 +609,9 @@ int main(int argc, char **argv)
                 Vector3d pL(cart_p(k,0), cart_p(k,1), cart_p(k,2));
                 Vector3d pR(cart_p(k,3), cart_p(k,4), cart_p(k,5));
                 VectorXd q_k;
-                dualarm.SolveIK_Position(model, data, l_EE, r_EE, pL, pR, seed_vec, q_k);
+                Vector3d ikL, ikR;
+                mapContactTargetsToIkTargets(seed_vec, pL, pR, ikL, ikR);
+                dualarm.SolveIK_Position(model, data, l_ik_EE, r_ik_EE, ikL, ikR, seed_vec, q_k);
                 for (int i = 0; i < DoF; i++) jp(k, i) = q_k(i);
                 seed_vec = q_k;   // 다음 웨이포인트/다음 세그먼트로 시드 연속성 유지
             }
@@ -561,17 +641,22 @@ int main(int argc, char **argv)
         };
 
         // ===== 전체 동작 순서 =====
-        // 1) 팔을 물체 옆 standoff 지점(파지 높이 유지, 받침대 바깥쪽)으로 이동
-        addCartesianSegment(start_L, standoffL, start_R, standoffR, PHASE_APPROACH);
+        // 1) 차렷에서 양팔을 먼저 제자리 근처에서 위로 들어 올린다.
+        addCartesianSegment(start_L, armRaiseL, start_R, armRaiseR, PHASE_APPROACH, 0.06);
 
-        // 1b) standoff -> 파지 위치로 y 방향 직선 접근 (파지 높이를 그대로 유지하므로 받침대와 부딪히지 않음)
-        // objL/R은 이미 박스 표면 안쪽(grasp_offset 침투)까지를 목표로 하므로, 기본 속도(0.1m/s)로
-        // 그대로 들어가면 접촉 순간 충격이 커서 좌우 접촉이 어긋나며 물체가 회전하며 떨어지는 문제가
-        // 있었다 - 이 구간만 더 느리게 접근해 접촉 충격을 줄인다.
+        // 2) 들어 올린 높이를 유지한 채 큐브 위쪽의 wide pregrasp로 이동한다.
+        addCartesianSegment(armRaiseL, pregraspHighWideL, armRaiseR, pregraspHighWideR, PHASE_APPROACH, 0.08);
+
+        // 3) 큐브 바로 위쪽 정렬 자세로 안쪽(y) 정렬한다. 높은 z에서만 움직여 pedestal과 간섭을 피한다.
+        addCartesianSegment(pregraspHighWideL, pregraspHighAlignL,
+                            pregraspHighWideR, pregraspHighAlignR, PHASE_APPROACH, 0.06);
+
+        // 4) 큐브 위에서 수직 하강하며 첫 contact 위치로 진입한다.
+        // objL/R은 이미 박스 표면 안쪽 침투까지를 목표로 하므로, 이 구간은 낮은 속도로 내려 접촉 충격을 줄인다.
         const double APPROACH_CONTACT_V_DES = 0.02;
-        addCartesianSegment(standoffL, objL, standoffR, objR, PHASE_APPROACH, APPROACH_CONTACT_V_DES);
+        addCartesianSegment(pregraspHighAlignL, objL, pregraspHighAlignR, objR, PHASE_APPROACH, APPROACH_CONTACT_V_DES);
 
-        // 2) 첫 접촉 후, lift 전에 짧은 추가 압착으로 손끝 판이 더 면접촉에 가까워지도록 만든다.
+        // 5) 첫 접촉 후, lift 전에 짧은 추가 압착으로 손끝 판이 더 면접촉에 가까워지도록 만든다.
         const double FINAL_SQUEEZE_V_DES = 0.01;
         addCartesianSegment(objL, squeezeL, objR, squeezeR, PHASE_GRASP_TO_PLACE, FINAL_SQUEEZE_V_DES);
         {
@@ -580,10 +665,10 @@ int main(int argc, char **argv)
             grasp_gate_row = rows_before_lift;
         }
 
-        // 3) 추가 압착 상태에서 수직으로 들어올리기. 이 구간부터 어드미턴스가 계속 켜진 상태다.
+        // 6) 추가 압착 상태에서 수직으로 들어올리기. 이 구간부터 어드미턴스가 계속 켜진 상태다.
         addCartesianSegment(squeezeL, liftL, squeezeR, liftR, PHASE_GRASP_TO_PLACE, 0.025);
 
-        // 4) 들어올린 높이를 유지한 채 목표 지점으로 이동 (계속 PHASE_GRASP_TO_PLACE, 스퀴즈 유지)
+        // 7) 들어올린 높이를 유지한 채 목표 지점으로 이동 (계속 PHASE_GRASP_TO_PLACE, 스퀴즈 유지)
         addCartesianSegment(liftL, transportL, liftR, transportR, PHASE_GRASP_TO_PLACE, 0.035);
         {
             int rows_before_return = 0;
@@ -591,10 +676,10 @@ int main(int argc, char **argv)
             grasp_gate_end_row = rows_before_return;
         }
 
-        // 5) 목표 지점에서 양팔을 바깥으로 벌려 물체를 놓는다.
+        // 8) 목표 지점에서 양팔을 바깥으로 벌려 물체를 놓는다.
         addCartesianSegment(transportL, releaseL, transportR, releaseR, PHASE_RETURN, 0.02);
 
-        // 6) 내려놓기 완료 -> 원래 위치로 복귀
+        // 9) 내려놓기 완료 -> 원래 차렷 위치로 복귀
         addCartesianSegment(releaseL, start_L, releaseR, start_R, PHASE_RETURN);
 
         ROS_INFO("Vision pick(dual-arm): object(world)=[%.3f %.3f %.3f], transport=[%.3f %.3f %.3f]",
@@ -681,21 +766,22 @@ int main(int argc, char **argv)
 
     while(ros::ok())
     {
+        ros::spinOnce();
 
         dual_arm_jointp[0] = waist_jointp[0];
         dual_arm_jointp[1] = head_jointp[0];
         dual_arm_jointp[2] = head_jointp[1];
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ARM_DOF; i++) {
             dual_arm_jointp[i + 3] = left_arm_jointp[i];
-            dual_arm_jointp[i + 7] = right_arm_jointp[i];
+            dual_arm_jointp[i + 8] = right_arm_jointp[i];
         }
 
         dual_arm_jointv[0] = waist_jointv[0];
         dual_arm_jointv[1] = head_jointv[0];
         dual_arm_jointv[2] = head_jointv[1];
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ARM_DOF; i++) {
             dual_arm_jointv[i + 3] = left_arm_jointv[i];
-            dual_arm_jointv[i + 7] = right_arm_jointv[i];
+            dual_arm_jointv[i + 8] = right_arm_jointv[i];
         }
 
         for (int i = 0; i < DoF; i++){
@@ -712,25 +798,21 @@ int main(int argc, char **argv)
         dual_arm_jointp_vec(0) = waist_jointp[0];
         dual_arm_jointp_vec(1) = head_jointp[0];
         dual_arm_jointp_vec(2) = head_jointp[1];
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ARM_DOF; i++) {
             dual_arm_jointp_vec(i + 3) = left_arm_jointp[i];
-            dual_arm_jointp_vec(i + 7) = right_arm_jointp[i];
+            dual_arm_jointp_vec(i + 8) = right_arm_jointp[i];
         }
 
         dual_arm_jointv_vec(0) = waist_jointv[0];
         dual_arm_jointv_vec(1) = head_jointv[0];
         dual_arm_jointv_vec(2) = head_jointv[1];
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ARM_DOF; i++) {
             dual_arm_jointv_vec(i + 3) = left_arm_jointv[i];
-            dual_arm_jointv_vec(i + 7) = right_arm_jointv[i];
+            dual_arm_jointv_vec(i + 8) = right_arm_jointv[i];
         }
 
-        dual_arm_jointv_lpf_vec(0) = waist_jointv[0];
-        dual_arm_jointv_lpf_vec(1) = head_jointv[0];
-        dual_arm_jointv_lpf_vec(2) = head_jointv[1];
-        for (int i = 0; i < 4; i++) {
-            dual_arm_jointv_lpf_vec(i + 3) = left_arm_jointv[i];
-            dual_arm_jointv_lpf_vec(i + 7) = right_arm_jointv[i];
+        for (int i = 0; i < DoF; i++) {
+            dual_arm_jointv_lpf_vec(i) = dual_arm_jointv_lpf[i];
         }
 
         const bool all_joint_states_received =
@@ -738,18 +820,22 @@ int main(int argc, char **argv)
 
         if (startup_state != STARTUP_COMPLETE) {
             if (!all_joint_states_received) {
-                loop_rate.sleep();
-                ros::spinOnce();
-                continue;
+                // Gazebo does not publish joint states while physics is paused.
+                // The spawn pose is the documented zero standing pose, so begin
+                // publishing its hold torque before the first physics step.
+                if (!startup_zero_state_assumed) {
+                    ROS_INFO("Startup: no joint state while paused; holding the zero standing pose.");
+                    startup_zero_state_assumed = true;
+                }
             }
 
             if (startup_state == STARTUP_WAIT_FOR_STATE) {
                 startup_hold_q[0] = waist_jointp[0];
                 startup_hold_q[1] = head_jointp[0];
                 startup_hold_q[2] = head_jointp[1];
-                for (int i = 0; i < 4; ++i) {
+                for (int i = 0; i < ARM_DOF; ++i) {
                     startup_hold_q[i + 3] = left_arm_jointp[i];
-                    startup_hold_q[i + 7] = right_arm_jointp[i];
+                    startup_hold_q[i + 8] = right_arm_jointp[i];
                 }
 
                 dual_arm_jointp_trajectory.resize(1, DoF);
@@ -763,33 +849,15 @@ int main(int argc, char **argv)
                 }
                 dual_arm_phase_trajectory(0) = PHASE_APPROACH;
                 traj_cnt = 0;
-                startup_hold_cnt = 0;
-                startup_state = STARTUP_HOLD_CURRENT;
-                ROS_INFO("Startup: captured current joint state, holding to let the robot settle.");
-            }
-            else if (startup_state == STARTUP_HOLD_CURRENT) {
-                double joint_vel_norm = fabs(waist_jointv[0]) + fabs(head_jointv[0]) + fabs(head_jointv[1]);
-                for (int i = 0; i < 4; ++i) {
-                    joint_vel_norm += fabs(left_arm_jointv[i]) + fabs(right_arm_jointv[i]);
-                }
-
-                if (joint_vel_norm < STARTUP_SETTLE_VEL_NORM) {
-                    startup_hold_cnt++;
-                } else {
-                    startup_hold_cnt = 0;
-                }
-
-                if (startup_hold_cnt >= STARTUP_HOLD_TICKS) {
-                    buildFixedDurationJointTrajectory(startup_hold_q, startup_target_q, STARTUP_MOVE_DURATION);
-                    traj_cnt = 0;
-                    traj_done_published = false;
-                    startup_state = STARTUP_MOVE_TO_TARGET;
-                    ROS_INFO("Startup: moving to elbow-down ready pose over %.1f s.", STARTUP_MOVE_DURATION);
-                }
+                buildFixedDurationJointTrajectory(startup_hold_q, startup_target_q, STARTUP_MOVE_DURATION);
+                traj_cnt = 0;
+                traj_done_published = false;
+                startup_state = STARTUP_MOVE_TO_TARGET;
+                ROS_INFO("Startup: moving to standing pose over %.1f s.", STARTUP_MOVE_DURATION);
             }
             else if (startup_state == STARTUP_MOVE_TO_TARGET && traj_cnt >= dual_arm_jointp_trajectory.rows()) {
                 startup_state = STARTUP_COMPLETE;
-                ROS_INFO("Startup: ready pose reached, enabling normal command processing.");
+                ROS_INFO("Startup: standing pose reached, enabling normal command processing.");
             }
         }
         VectorXd nominal_joint_acc_vec = VectorXd::Zero(DoF);
@@ -801,9 +869,9 @@ int main(int argc, char **argv)
             dual_arm_initp[0] = waist_jointp[0];
             dual_arm_initp[1] = head_jointp[0];
             dual_arm_initp[2] = head_jointp[1];
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < ARM_DOF; i++) {
                 dual_arm_initp[i + 3] = left_arm_jointp[i];
-                dual_arm_initp[i + 7] = right_arm_jointp[i];
+                dual_arm_initp[i + 8] = right_arm_jointp[i];
             }
             for (int i = 0; i < DoF; i++) q_ik_seed(i) = dual_arm_initp[i];
 
@@ -820,7 +888,9 @@ int main(int argc, char **argv)
                 Vector3d tL(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
                 Vector3d tR(dual_arm_commandx[3], dual_arm_commandx[4], dual_arm_commandx[5]);
 
-                dualarm.SolveIK_Position(model, data, l_EE, r_EE, tL, tR, q_ik_seed, q_ik_result);
+                Vector3d ikL, ikR;
+                mapContactTargetsToIkTargets(q_ik_seed, tL, tR, ikL, ikR);
+                dualarm.SolveIK_Position(model, data, l_ik_EE, r_ik_EE, ikL, ikR, q_ik_seed, q_ik_result);
 
                 for (int i = 0; i < DoF; i++) dual_arm_commandp[i] = q_ik_result(i);
 
@@ -837,8 +907,8 @@ int main(int argc, char **argv)
                 }
                 pinocchio::forwardKinematics(model, data, dual_arm_jointp_vec);
                 pinocchio::updateFramePlacements(model, data);
-                Vector3d startL = data.oMf[l_EE].translation();
-                Vector3d startR = data.oMf[r_EE].translation();
+                Vector3d startL = data.oMf[l_contact_EE].translation();
+                Vector3d startR = data.oMf[r_contact_EE].translation();
 
                 Vector3d goalL(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
                 Vector3d goalR(dual_arm_commandx[3], dual_arm_commandx[4], dual_arm_commandx[5]);
@@ -859,7 +929,9 @@ int main(int argc, char **argv)
                     Vector3d pR(dual_arm_cart_pos_trajectory(k,3), dual_arm_cart_pos_trajectory(k,4), dual_arm_cart_pos_trajectory(k,5));
 
                     VectorXd q_k;
-                    dualarm.SolveIK_Position(model, data, l_EE, r_EE, pL, pR, seed, q_k);
+                    Vector3d ikL, ikR;
+                    mapContactTargetsToIkTargets(seed, pL, pR, ikL, ikR);
+                    dualarm.SolveIK_Position(model, data, l_ik_EE, r_ik_EE, ikL, ikR, seed, q_k);
 
                     for (int i = 0; i < DoF; i++) {
                         dual_arm_jointp_trajectory(k,i) = q_k(i);
@@ -927,24 +999,27 @@ int main(int argc, char **argv)
             callback = false;
         }
         else if (traj_cnt < dual_arm_jointp_trajectory.rows()){
+            bool grasp_gate_holding = false;
             if (grasp_gate_row > 0 &&
                 traj_cnt >= grasp_gate_row &&
                 (grasp_gate_end_row < 0 || traj_cnt < grasp_gate_end_row)) {
                 if (!grasp_contact_ready) {
                     traj_cnt = grasp_gate_row - 1;  // 마지막 squeeze row에 고정, bilateral contact 전에는 lift 금지
+                    grasp_gate_holding = true;
                 } else if (grasp_post_contact_hold_ticks < GRASP_POST_CONTACT_HOLD_TICKS) {
                     traj_cnt = grasp_gate_row - 1;  // 접촉 직후 그대로 더 조여서 면접촉을 안정화
                     grasp_post_contact_hold_ticks++;
+                    grasp_gate_holding = true;
                 }
             }
             for (int i = 0; i < DoF; i++){
                 dual_arm_targetp[i] = dual_arm_jointp_trajectory(traj_cnt, i);
             }
             for (int i = 0; i < DoF; i++){
-                dual_arm_targetv[i] = dual_arm_jointv_trajectory(traj_cnt, i);
+                dual_arm_targetv[i] = grasp_gate_holding ? 0.0 : dual_arm_jointv_trajectory(traj_cnt, i);
             }
             for (int i = 0; i < DoF; i++){
-                nominal_joint_acc_vec(i) = dual_arm_jointa_trajectory(traj_cnt, i);
+                nominal_joint_acc_vec(i) = grasp_gate_holding ? 0.0 : dual_arm_jointa_trajectory(traj_cnt, i);
             }
 
             // vision pick(mode 3) 재생 중이면 현재 행에 태깅된 phase로 자동 전환.
@@ -1014,27 +1089,30 @@ int main(int argc, char **argv)
             pinocchio::computeJointJacobians(model, data, dual_arm_jointp_vec);
             pinocchio::updateFramePlacements(model, data);
 
-            Vector3d xL_actual = data.oMf[l_EE].translation();
-            Vector3d xR_actual = data.oMf[r_EE].translation();
-            Matrix3d RL_actual = data.oMf[l_EE].rotation();
-            Matrix3d RR_actual = data.oMf[r_EE].rotation();
+            Vector3d xL_actual = data.oMf[l_contact_EE].translation();
+            Vector3d xR_actual = data.oMf[r_contact_EE].translation();
+            Matrix3d RL_actual = data.oMf[l_contact_EE].rotation();
+            Matrix3d RR_actual = data.oMf[r_contact_EE].rotation();
 
             pinocchio::Data::Matrix6x JL_full(6, model.nv); JL_full.setZero();
             pinocchio::Data::Matrix6x JR_full(6, model.nv); JR_full.setZero();
-            pinocchio::getFrameJacobian(model, data, l_EE, pinocchio::LOCAL_WORLD_ALIGNED, JL_full);
-            pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR_full);
+            pinocchio::getFrameJacobian(model, data, l_contact_EE, pinocchio::LOCAL_WORLD_ALIGNED, JL_full);
+            pinocchio::getFrameJacobian(model, data, r_contact_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR_full);
             MatrixXd JL = JL_full.topRows<3>();   // 위치 3행만 (DoF 열)
             MatrixXd JR = JR_full.topRows<3>();
-            MatrixXd JL_arm(3, 4);
-            MatrixXd JR_arm(3, 4);
-            for (int c = 0; c < 4; ++c) {
+            constexpr int FORCE_CONTROL_DOF = 4;  // shoulder 3축 + elbow; wrist yaw 제외
+            MatrixXd JL_arm(3, FORCE_CONTROL_DOF);
+            MatrixXd JR_arm(3, FORCE_CONTROL_DOF);
+            for (int c = 0; c < FORCE_CONTROL_DOF; ++c) {
                 JL_arm.col(c) = JL.col(c + 3);
-                JR_arm.col(c) = JR.col(c + 7);
+                JR_arm.col(c) = JR.col(c + 8);
             }
 
             // nominal target EE 위치 (target 궤적 기준 FK)
             pinocchio::forwardKinematics(model, data, dual_arm_targetp_vec);
             pinocchio::updateFramePlacements(model, data);
+            const Vector3d xL_nominal = data.oMf[l_contact_EE].translation();
+            const Vector3d xR_nominal = data.oMf[r_contact_EE].translation();
             // F/T 원시값은 접촉 순간 노이즈가 커서 그대로 적분하면 순응 상태가 요동하므로 로우패스로 완화.
             for (int k = 0; k < 3; k++) {
                 left_ft_force_lpf(k)  = dualarm.LowPassFilter(left_ft_force(k),  left_ft_force_before(k),  FT_LPF_CUTOFF_HZ);
@@ -1076,11 +1154,23 @@ int main(int argc, char **argv)
 
             Vector3d xL_adm_ddot = Vector3d::Zero();
             Vector3d xR_adm_ddot = Vector3d::Zero();
-            Vector3d F_ctrl_L = -F_ext_L;
-            Vector3d F_ctrl_R = -F_ext_R;
+            // The fixed-joint F/T sensors also measure the palm's own weight.
+            // Integrating all three axes therefore pulls both hands away from
+            // the Cartesian path while waiting at the grasp gate.  Compliance
+            // is needed only along the opposing palm normals (world Y); keep
+            // X/Z on the nominal IK path until wrench bias compensation exists.
+            Vector3d F_ctrl_L = Vector3d::Zero();
+            Vector3d F_ctrl_R = Vector3d::Zero();
             F_ctrl_L(1) = F_ext_L(1) - DESIRED_SQUEEZE_FORCE;
             F_ctrl_R(1) = F_ext_R(1) + DESIRED_SQUEEZE_FORCE;
             for (int k = 0; k < 3; k++) {
+                if (k != 1) {
+                    left_adm_pos(k) = 0.0;
+                    right_adm_pos(k) = 0.0;
+                    left_adm_vel(k) = 0.0;
+                    right_adm_vel(k) = 0.0;
+                    continue;
+                }
                 xL_adm_ddot(k) = (F_ctrl_L(k) - Da_left[k] * left_adm_vel(k) - Ka_left[k] * left_adm_pos(k)) / Ma_left[k];
                 xR_adm_ddot(k) = (F_ctrl_R(k) - Da_right[k] * right_adm_vel(k) - Ka_right[k] * right_adm_pos(k)) / Ma_right[k];
 
@@ -1102,11 +1192,20 @@ int main(int argc, char **argv)
             VectorXd dq_adm_dot_L = dualarm.DampedPinv(JL_arm, ADMITTANCE_DLS_LAMBDA) * left_adm_vel;
             VectorXd dq_adm_dot_R = dualarm.DampedPinv(JR_arm, ADMITTANCE_DLS_LAMBDA) * right_adm_vel;
 
-            for (int i = 0; i < 4; ++i) {
+            ROS_INFO_THROTTLE(
+                1.0,
+                "Squeeze diag: gap actual=%.3f nominal=%.3f m, admY L/R=[%.3f %.3f] m, "
+                "Fy_world L/R=[%.2f %.2f] N, dq_norm L/R=[%.3f %.3f]",
+                std::abs(xL_actual(1) - xR_actual(1)),
+                std::abs(xL_nominal(1) - xR_nominal(1)),
+                left_adm_pos(1), right_adm_pos(1),
+                F_ext_L(1), F_ext_R(1), dq_adm_L.norm(), dq_adm_R.norm());
+
+            for (int i = 0; i < FORCE_CONTROL_DOF; ++i) {
                 dual_arm_targetp_vec(i + 3) += dq_adm_L(i);
-                dual_arm_targetp_vec(i + 7) += dq_adm_R(i);
+                dual_arm_targetp_vec(i + 8) += dq_adm_R(i);
                 dual_arm_targetv_vec(i + 3) += dq_adm_dot_L(i);
-                dual_arm_targetv_vec(i + 7) += dq_adm_dot_R(i);
+                dual_arm_targetv_vec(i + 8) += dq_adm_dot_R(i);
             }
 
             for (int i = 0; i < DoF; ++i) {
@@ -1127,19 +1226,15 @@ int main(int argc, char **argv)
             }
         }
 
+        // Keep the damping feedback unfiltered: a 10 Hz filter adds enough
+        // phase lag to destabilize the stiff effort-controlled arm chain.
         dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_targetv, dual_arm_jointv, PD_acc);
         for (int i = 0; i < DoF; i++) {
             dual_arm_targeta_vec(i) = nominal_joint_acc_vec(i) + PD_acc[i];
         }
 
-        // dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_jointv, PD_torque);
         gravity_torque = pinocchio::computeGeneralizedGravity(model, data, dual_arm_jointp_vec);
-        dynamic_torque = pinocchio::rnea(model, data, dual_arm_jointp_vec, dual_arm_jointv_vec, dual_arm_targeta_vec);
-
-        // dualarm.PDController(dual_arm_targetp, dual_arm_jointp, dual_arm_jointv_lpf, PD_torque);
-        // gravity_torque = pinocchio::computeGeneralizedGravity(model, data, dual_arm_jointp_vec);
-        // dynamic_torque = pinocchio::rnea(model, data, dual_arm_jointp_vec, dual_arm_jointv_lpf_vec, dual_arm_targeta_vec);
-
+        dynamic_torque = pinocchio::rnea(model, data, dual_arm_jointp_vec, dual_arm_jointv_lpf_vec, dual_arm_targeta_vec);
         for (int i = 0; i < DoF; i++) {
             target_torque[i] = dynamic_torque(i);
         }
@@ -1174,10 +1269,14 @@ int main(int argc, char **argv)
             shoulder_roll_l_joint_msg.data  = dual_arm_targetp[4];
             shoulder_yaw_l_joint_msg.data   = dual_arm_targetp[5];
             elbow_l_joint_msg.data          = dual_arm_targetp[6];
-            shoulder_pitch_r_joint_msg.data = dual_arm_targetp[7];
-            shoulder_roll_r_joint_msg.data  = dual_arm_targetp[8];
-            shoulder_yaw_r_joint_msg.data   = dual_arm_targetp[9];
-            elbow_r_joint_msg.data          = dual_arm_targetp[10];
+            wrist_yaw_l_joint_msg.data      = dual_arm_targetp[7];
+            shoulder_pitch_r_joint_msg.data = dual_arm_targetp[8];
+            shoulder_roll_r_joint_msg.data  = dual_arm_targetp[9];
+            shoulder_yaw_r_joint_msg.data   = dual_arm_targetp[10];
+            elbow_r_joint_msg.data          = dual_arm_targetp[11];
+            wrist_yaw_r_joint_msg.data      = dual_arm_targetp[12];
+            head_yaw_joint_msg.data         = dual_arm_targetp[1];
+            head_pitch_joint_msg.data       = dual_arm_targetp[2];
 
         // Effort Control
         #elif ARMCTRLMODE == EFFORT
@@ -1188,10 +1287,12 @@ int main(int argc, char **argv)
             shoulder_roll_l_joint_msg.data  = target_torque[4];
             shoulder_yaw_l_joint_msg.data   = target_torque[5];
             elbow_l_joint_msg.data          = target_torque[6];
-            shoulder_pitch_r_joint_msg.data = target_torque[7];
-            shoulder_roll_r_joint_msg.data  = target_torque[8];
-            shoulder_yaw_r_joint_msg.data   = target_torque[9];
-            elbow_r_joint_msg.data          = target_torque[10];
+            wrist_yaw_l_joint_msg.data      = target_torque[7];
+            shoulder_pitch_r_joint_msg.data = target_torque[8];
+            shoulder_roll_r_joint_msg.data  = target_torque[9];
+            shoulder_yaw_r_joint_msg.data   = target_torque[10];
+            elbow_r_joint_msg.data          = target_torque[11];
+            wrist_yaw_r_joint_msg.data      = target_torque[12];
 
         #endif
 
@@ -1201,12 +1302,14 @@ int main(int argc, char **argv)
         dual_armjoint3_pub.publish(shoulder_roll_l_joint_msg);
         dual_armjoint4_pub.publish(shoulder_yaw_l_joint_msg);
         dual_armjoint5_pub.publish(elbow_l_joint_msg);
-        dual_armjoint6_pub.publish(shoulder_pitch_r_joint_msg);
-        dual_armjoint7_pub.publish(shoulder_roll_r_joint_msg);
-        dual_armjoint8_pub.publish(shoulder_yaw_r_joint_msg);
-        dual_armjoint9_pub.publish(elbow_r_joint_msg);
-        dual_armjoint10_pub.publish(head_yaw_joint_msg);
-        dual_armjoint11_pub.publish(head_pitch_joint_msg);
+        dual_armjoint6_pub.publish(wrist_yaw_l_joint_msg);
+        dual_armjoint7_pub.publish(shoulder_pitch_r_joint_msg);
+        dual_armjoint8_pub.publish(shoulder_roll_r_joint_msg);
+        dual_armjoint9_pub.publish(shoulder_yaw_r_joint_msg);
+        dual_armjoint10_pub.publish(elbow_r_joint_msg);
+        dual_armjoint11_pub.publish(wrist_yaw_r_joint_msg);
+        dual_armjoint12_pub.publish(head_yaw_joint_msg);
+        dual_armjoint13_pub.publish(head_pitch_joint_msg);
 
         
         cout << fixed << setprecision(4);
@@ -1227,7 +1330,6 @@ int main(int argc, char **argv)
         //cout << "Orientation (Rotation Matrix):\n" << data.oMf[r_EE].rotation() << endl;     
 
         loop_rate.sleep();
-        ros::spinOnce();
     }
     
     return 0;

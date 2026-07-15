@@ -7,22 +7,22 @@
     <static>false</static>
     <link name="link">
       <inertial>
-        <mass>0.1</mass>
-        <!-- solid cube, side 0.1m: ixx=iyy=izz = (1/6)*m*s^2 -->
+        <mass>1.28</mass>
+        <!-- 0.20 x 0.32 x 0.20m solid box. -->
         <inertia>
-          <ixx>0.000333</ixx>
+          <ixx>0.015189</ixx>
           <ixy>0</ixy>
           <ixz>0</ixz>
-          <iyy>0.000333</iyy>
+          <iyy>0.008533</iyy>
           <iyz>0</iyz>
-          <izz>0.000333</izz>
+          <izz>0.015189</izz>
         </inertia>
       </inertial>
 
       <collision name="collision">
         <geometry>
           <box>
-            <size>0.1 0.1 0.1</size>
+            <size>0.2 0.32 0.2</size>
           </box>
         </geometry>
         <surface>
@@ -38,7 +38,7 @@
       <visual name="visual_box">
         <geometry>
           <box>
-            <size>0.1 0.1 0.1</size>
+            <size>0.2 0.32 0.2</size>
           </box>
         </geometry>
         <material>
@@ -51,7 +51,7 @@
            The head camera looks downward during scan, so a top-facing marker
            is more consistent with the actual pick scene than a side-facing one. -->
       <visual name="visual_marker_26">
-        <pose>0 0 0.0505 0 0 0</pose>
+        <pose>0 0 0.1005 0 0 0</pose>
         <geometry>
           <box>
             <size>0.05 0.05 0.001</size>

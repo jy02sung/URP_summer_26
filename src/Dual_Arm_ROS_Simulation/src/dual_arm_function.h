@@ -35,9 +35,12 @@ using namespace Eigen;
 // 전역 변수 선언
 const double deg2rad = M_PI / 180;
 const double rad2deg = 180 / M_PI;
-const int DoF = 11;
-// DoF 배열 순서(Pinocchio model.nq 순서와 동일해야 함, urdf 트리 순회 결과로 실측 확인됨):
-// 0:Waist 1:Head_yaw 2:Head_pitch 3:L_sp 4:L_sr 5:L_sy 6:L_e 7:R_sp 8:R_sr 9:R_sy 10:R_e
+const int ARM_DOF = 5;
+const int DoF = 13;
+// DoF 배열 순서(Pinocchio model.nq 순서와 동일):
+// 0:Waist 1:Head_yaw 2:Head_pitch
+// 3:L_sp 4:L_sr 5:L_sy 6:L_e 7:L_wy
+// 8:R_sp 9:R_sr 10:R_sy 11:R_e 12:R_wy
 const double SAMPLING_TIME = 0.001;
 const double SAMPLING_TIME_TRAJ = 0.001;
 
@@ -61,12 +64,12 @@ double waist_torque[1] = {0};
 double head_jointp[2] = {0,};   // [0]=yaw, [1]=pitch
 double head_jointv[2] = {0,};
 double head_torque[2] = {0,};
-double left_arm_jointp[4] = {0,};
-double left_arm_jointv[4] = {0,};
-double left_arm_torque[4] = {0,};
-double right_arm_jointp[4] = {0,};
-double right_arm_jointv[4] = {0,};
-double right_arm_torque[4] = {0,};
+double left_arm_jointp[ARM_DOF] = {0,};
+double left_arm_jointv[ARM_DOF] = {0,};
+double left_arm_torque[ARM_DOF] = {0,};
+double right_arm_jointp[ARM_DOF] = {0,};
+double right_arm_jointv[ARM_DOF] = {0,};
+double right_arm_torque[ARM_DOF] = {0,};
 
 double dual_arm_jointp[DoF] = {0,};
 double dual_arm_jointv[DoF] = {0,};
@@ -95,10 +98,12 @@ MatrixXd dual_arm_jointa_trajectory = MatrixXd::Zero(1,DoF);
 // double Kp[DoF] = { 1000, 500, 350, 50, 100, 500, 350, 50, 100 }; //이거 사용
 // double Kd[DoF] = { 10, 3, 1.5, 0.5, 1, 3, 1.5, 0.5, 1 };
 
-// 순서: Waist, Head_yaw, Head_pitch, L_sp,L_sr,L_sy,L_e, R_sp,R_sr,R_sy,R_e
-// head 게인은 초기값(관성이 작아 팔보다 낮게 시작) - 실제 거동 보고 재튜닝 필요
-double Kp[DoF] = { 1000, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500 };
-double Kd[DoF] = { 50,   30,  30,  4,   4,   4,   4,   4,   4,   4,   4   };
+// PD output is an acceleration target passed through RNEA.  Keep the original
+// waist/head gains, but use damping-dominant arm gains so the added wrist mass
+// does not drive the physical effort limits into sustained saturation.
+// Order: Waist, Head_yaw, Head_pitch, L_sp,L_sr,L_sy,L_e,L_wy, R_sp,R_sr,R_sy,R_e,R_wy.
+double Kp[DoF] = { 1000, 500, 500, 160, 160, 160, 160, 40, 160, 160, 160, 160, 40 };
+double Kd[DoF] = { 50,   30,  30, 25,  25,  25,  25,  8,  25,  25,  25,  25,  8  };
 
 double PD_torque[DoF] = {0, };
 double PD_acc[DoF] = {0, };
@@ -142,8 +147,8 @@ Vector3d right_ft_torque_lpf    = Vector3d::Zero();
 Vector3d left_ft_torque_before  = Vector3d::Zero();
 Vector3d right_ft_torque_before = Vector3d::Zero();
 const double FT_LPF_CUTOFF_HZ  = 10.0;  // 컷오프 주파수 [Hz]
-const double GRASP_CONTACT_FORCE_THRESHOLD = 1.1;     // [N] 좌우 모두 이 값 이상일 때 squeeze 접촉 후보
-const double GRASP_FACE_CONTACT_TORQUE_THRESHOLD = 0.08; // [N*m] 손바닥 면접촉이면 x/z 모멘트가 작아야 함
+const double GRASP_CONTACT_FORCE_THRESHOLD = 9.5;     // [N] 손당 10N 목표의 5% 이내에 들어와야 파지 완료
+const double GRASP_FACE_CONTACT_TORQUE_THRESHOLD = 0.25; // [N*m] 10N 파지와 넓어진 pad의 정상 모멘트 허용
 const int    GRASP_CONTACT_HOLD_TICKS = 120;         // 0.12s @ 1kHz
 const int    GRASP_POST_CONTACT_HOLD_TICKS = 500;    // 0.50s @ 1kHz, 접촉 직후 그대로 더 조여서 안정화
 
@@ -151,20 +156,20 @@ const int    GRASP_POST_CONTACT_HOLD_TICKS = 500;    // 0.50s @ 1kHz, 접촉 직
 // x는 nominal grasp trajectory 위에 덧붙이는 Cartesian compliance offset이다.
 double Ma_left[3]      = { 2.0, 2.0, 2.0 };       // 가상 질량 [kg]
 double Da_left[3]      = { 65.0, 65.0, 65.0 };    // 가상 댐핑 [N·s/m]
-double Ka_left[3]      = { 500.0, 500.0, 500.0 }; // 가상 강성 [N/m]
+double Ka_left[3]      = { 500.0, 0.0, 500.0 };   // squeeze(Y)는 힘 오차가 0일 때만 정지
 
 double Ma_right[3]     = { 2.0, 2.0, 2.0 };
 double Da_right[3]     = { 65.0, 65.0, 65.0 };
-double Ka_right[3]     = { 500.0, 500.0, 500.0 };
+double Ka_right[3]     = { 500.0, 0.0, 500.0 };
 
 Vector3d left_adm_pos  = Vector3d::Zero();
 Vector3d left_adm_vel  = Vector3d::Zero();
 Vector3d right_adm_pos = Vector3d::Zero();
 Vector3d right_adm_vel = Vector3d::Zero();
 const double ADMITTANCE_DLS_LAMBDA = 0.05;   // Cartesian offset -> arm joint offset 변환용
-const double ADMITTANCE_POS_LIMIT  = 0.05;   // 축별 최대 순응 변위 [m]
+const double ADMITTANCE_POS_LIMIT  = 0.05;   // nominal IK가 면에 도달한 뒤 10N까지 압착할 수 있는 변위 여유
 const double ADMITTANCE_VEL_LIMIT  = 0.25;   // 축별 최대 순응 속도 [m/s]
-const double DESIRED_SQUEEZE_FORCE = 2.6;    // [N] transport 중 유지하려는 손당 정상 squeeze 힘
+const double DESIRED_SQUEEZE_FORCE = 10.0;   // [N] 양쪽 손이 각각 유지할 정상 squeeze 힘
 
 
 
