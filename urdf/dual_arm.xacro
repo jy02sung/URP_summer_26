@@ -401,13 +401,21 @@
          world 자세를 구한 뒤, 원판 법선(로컬 Z축)이 파지 시점 물체 옆면 법선(월드 Y축)과 정확히
          평행해지는 방향으로 역산했다 (계산: fk_pad_calc.cpp, 일회성 도구, 커밋 안 함, dot=1.0 검증).
          위치(origin xyz)는 기존 패드 자리를 그대로 재사용 - mesh 표면 돌출거리 재튜닝은 보류.
-         2026-07-17: SolveIK_Position에 null-space q_pref(elbow-down+out) 투영을 추가하면서
-         파지 시점 실제 손 자세가 달라져 재계산했다(recompute_pad_rpy.py, 일회성 도구, 커밋 안 함,
-         dot=1.0 재검증) - null-space 항이 관절 배치를 바꾸면 이 rpy도 다시 맞춰야 한다. -->
+         2026-07-17(1): SolveIK_Position에 null-space q_pref(elbow-down+out) 투영을 추가하면서
+         파지 시점 실제 손 자세가 달라져 rpy를 재계산했다(recompute_pad_rpy.py, 일회성 도구,
+         커밋 안 함, dot=1.0 재검증) - null-space 항이 관절 배치를 바꾸면 이 rpy도 다시 맞춰야 한다.
+         2026-07-17(2): origin xyz를 "탄젠트 접점" 방식으로 재계산했다(compute_tangent_offset.py,
+         일회성 도구, 커밋 안 함) - 기존엔 이전 사각패드 자리를 관성적으로 재사용/스케일링만 해왔는데,
+         Gazebo에서 패드가 손목 mesh에 파묻히거나 반대로 붕 뜨는 문제가 반복됐다. L_EE/R_EE 원점
+         (손목 구체 중심)에서 물체 중심 방향으로, 월드 Z성분을 0으로 강제한(손목 구체 중앙 높이
+         유지) 뒤 손목 구체 실측 반지름(0.0325m)만큼 나간 지점을 월드 좌표로 구하고, 이를 손
+         로컬 프레임으로 역변환해 origin xyz로 썼다 - 원판이 손목 구체 표면에 기하학적으로 정확히
+         접하도록(붕 뜸도 파묻힘도 없이) 만드는 게 목적. rpy는 그 후 사용자가 Gazebo 육안 확인으로
+         왼쪽 +7.5°/오른쪽 -7.5°(대칭) 미세 조정해 최종 확정했다. -->
     <visual name="L_EE_grip_disc_visual">
       <origin
-        xyz="0.009786 -0.030398 0.003877"
-        rpy="0.752861 -0.000000 -3.065760" />
+        xyz="0.001087 -0.020925 -0.024844"
+        rpy="0.752861 -0.000000 -2.834860" />
       <geometry>
         <cylinder radius="0.03" length="0.01" />
       </geometry>
@@ -417,8 +425,8 @@
     </visual>
     <collision name="L_EE_grip_disc_collision">
       <origin
-        xyz="0.009786 -0.030398 0.003877"
-        rpy="0.752861 -0.000000 -3.065760" />
+        xyz="0.001087 -0.020925 -0.024844"
+        rpy="0.752861 -0.000000 -2.834860" />
       <geometry>
         <cylinder radius="0.03" length="0.01" />
       </geometry>
@@ -725,11 +733,12 @@
          무시할 수준은 아니다. L_EE와 동일한 방식으로 rpy를 target_local_dir(=R_EE^T*worldY)에
          맞춰 보정한다 (계산: fk_debug.cpp, 일회성 도구, 커밋 안 함). -->
     <!-- 원형 접촉 패드 - L_EE 쪽 설명 참고. 동일한 방식(recompute_pad_rpy.py로 null-space
-         적용된 파지 파이프라인 처음부터 재현)으로 rpy 재계산, dot=1.0 검증. -->
+         적용된 파지 파이프라인 처음부터 재현, compute_tangent_offset.py로 탄젠트 접점 위치
+         재계산)으로 rpy/xyz 재계산, dot=1.0 검증. rpy 최종값은 왼쪽과 대칭으로 -7.5° 미세 조정. -->
     <visual name="R_EE_grip_disc_visual">
       <origin
-        xyz="0.003329 0.035647 -0.001762"
-        rpy="1.817146 -0.000000 2.842748" />
+        xyz="0.008658 0.029717 -0.009909"
+        rpy="1.817146 -0.000000 2.611848" />
       <geometry>
         <cylinder radius="0.03" length="0.01" />
       </geometry>
@@ -739,8 +748,8 @@
     </visual>
     <collision name="R_EE_grip_disc_collision">
       <origin
-        xyz="0.003329 0.035647 -0.001762"
-        rpy="1.817146 -0.000000 2.842748" />
+        xyz="0.008658 0.029717 -0.009909"
+        rpy="1.817146 -0.000000 2.611848" />
       <geometry>
         <cylinder radius="0.03" length="0.01" />
       </geometry>
