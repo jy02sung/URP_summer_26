@@ -129,6 +129,15 @@ int grasp_gate_row = -1;         // lift 세그먼트 진입 직전(마지막 sq
 int grasp_gate_end_row = -1;     // return 세그먼트 진입 직전 인덱스; gate는 이 전까지만 유효
 bool grasp_contact_ready = false;
 bool grasp_acquired_once = false;  // 최초 파지 이후 힘 저하는 궤적 rewind 대신 제자리에서 회복
+bool realtime_lift_active = false;
+bool realtime_lift_hold_active = false;
+int realtime_lift_ticks = 0;
+int realtime_lift_hold_ticks = 0;
+VectorXd realtime_lift_hold_q = VectorXd::Zero(DoF);
+Vector3d realtime_ref_L = Vector3d::Zero();
+Vector3d realtime_ref_R = Vector3d::Zero();
+const int REALTIME_LIFT_TICKS = 800; // 0.8 s at 1 kHz
+const int REALTIME_LIFT_HOLD_TICKS = 2000; // 2 s stabilization before transport
 int grasp_contact_ticks = 0;
 int grasp_post_contact_hold_ticks = 0;
 

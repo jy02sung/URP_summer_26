@@ -30,6 +30,8 @@
             <ode>
               <mu>2.5</mu>
               <mu2>2.5</mu2>
+              <kp>100000.0</kp>
+              <kd>30.0</kd>
             </ode>
           </friction>
         </surface>

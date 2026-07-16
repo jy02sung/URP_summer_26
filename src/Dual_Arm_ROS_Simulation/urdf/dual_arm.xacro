@@ -582,8 +582,8 @@
   <gazebo reference="L_EE">
     <mu1>3.0</mu1>
     <mu2>3.0</mu2>
-    <kp>1000000.0</kp>
-    <kd>10.0</kd>
+    <kp>100000.0</kp>
+    <kd>30.0</kd>
   </gazebo>
   <gazebo reference="R_EE_joint">
     <disableFixedJointLumping>true</disableFixedJointLumping>
@@ -592,8 +592,8 @@
   <gazebo reference="R_EE">
     <mu1>3.0</mu1>
     <mu2>3.0</mu2>
-    <kp>1000000.0</kp>
-    <kd>10.0</kd>
+    <kp>100000.0</kp>
+    <kd>30.0</kd>
   </gazebo>
   <!-- Integrate joint damping implicitly.  Explicit ODE damping excites the
        low-inertia yaw/wrist links under the 1 kHz effort controller. -->

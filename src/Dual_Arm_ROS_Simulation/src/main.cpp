@@ -550,7 +550,9 @@ int main(int argc, char **argv)
         // 박스 중심 높이에 패드 중심을 맞춘다. 패드 높이는 9 cm이고 받침대
         // 상단은 박스 바닥과 같으므로, 이전 -7 cm 목표는 패드 하단이
         // 받침대를 2.6 cm 관통해 F/T 센서가 박스 대신 받침대 반력을 읽었다.
-        const double CONTACT_Z_BIAS = 0.000;
+        // 파지 중심이 박스 중앙보다 높게 형성되지 않도록 접촉 기준을
+        // 2 cm 낮춘다. 실시간 리프트 기준점도 이 실제 접촉 위치에서 시작한다.
+        const double CONTACT_Z_BIAS = -0.100;
         const double CONTACT_FACE_INSET = 0.008;  // 첫 접촉 시 face 안쪽 침투량 [m]
         const double SQUEEZE_FACE_INSET = 0.028;  // 양쪽 grip pad가 큐브 면에 확실히 닿도록 손당 12mm 추가 squeeze
         const double ARM_RAISE_Z = 0.16;          // 차렷 후 먼저 제자리에서 들어올릴 높이 [m]
@@ -596,6 +598,13 @@ int main(int argc, char **argv)
         grasp_gate_end_row = -1;
         grasp_contact_ready = false;
         grasp_acquired_once = false;
+        realtime_lift_active = false;
+        realtime_lift_hold_active = false;
+        realtime_lift_ticks = 0;
+        realtime_lift_hold_ticks = 0;
+        realtime_lift_hold_q.setZero();
+        realtime_ref_L.setZero();
+        realtime_ref_R.setZero();
         grasp_contact_ticks = 0;
         grasp_post_contact_hold_ticks = 0;
         left_adm_recenter_count = 0;
@@ -1027,6 +1036,14 @@ int main(int argc, char **argv)
                     grasp_post_contact_hold_ticks++;
                     grasp_gate_holding = true;
                 }
+                if (realtime_lift_active) {
+                    // 파지 직후에는 미리 계산한 관절 궤적을 재생하지 않고,
+                    // 아래 task-space admittance가 매 주기 새 목표를 만든다.
+                    grasp_gate_holding = true;
+                }
+                if (realtime_lift_hold_active) {
+                    grasp_gate_holding = true;
+                }
             }
             for (int i = 0; i < DoF; i++){
                 dual_arm_targetp[i] = dual_arm_jointp_trajectory(traj_cnt, i);
@@ -1152,16 +1169,14 @@ int main(int argc, char **argv)
             // F/T 센서 힘: 센서가 EE 프레임과 동일 방향으로 장착되었다고 가정하고 world frame으로 변환
             Vector3d F_ext_L = RL_actual * left_ft_force_lpf;
             Vector3d F_ext_R = RR_actual * right_ft_force_lpf;
-            // 각 패드의 local-Y 축을 실제 손바닥 법선으로 사용하되, 부호는
-            // 항상 반대편 손을 향하도록 정규화한다. 따라서 허리/팔/손목이
-            // 회전해도 힘 제어 방향이 world-Y에 고정되지 않는다.
+            // 양손 중심을 잇는 선분을 bilateral squeeze 축으로 사용한다.
+            // 패드 법선은 진단/정렬 판정에만 남기고, 힘 투영과 admittance
+            // 보정은 좌우가 완전히 같은 중심선 기준으로 계산한다.
             const Vector3d left_to_right = (xR_actual - xL_actual).normalized();
-            Vector3d normal_L = RL_actual.col(1);
-            Vector3d normal_R = RR_actual.col(1);
-            if (normal_L.dot(left_to_right) < 0.0) normal_L = -normal_L;
-            if (normal_R.dot(-left_to_right) < 0.0) normal_R = -normal_R;
-            const double compressive_force_L = std::max(0.0, -F_ext_L.dot(normal_L));
-            const double compressive_force_R = std::max(0.0, -F_ext_R.dot(normal_R));
+            const Vector3d squeeze_axis_L = left_to_right;
+            const Vector3d squeeze_axis_R = -left_to_right;
+            const double compressive_force_L = std::max(0.0, -F_ext_L.dot(squeeze_axis_L));
+            const double compressive_force_R = std::max(0.0, -F_ext_R.dot(squeeze_axis_R));
             std_msgs::Float64 left_grasp_force_msg;
             std_msgs::Float64 right_grasp_force_msg;
             std_msgs::Float64 grasp_force_target_msg;
@@ -1233,6 +1248,15 @@ int main(int argc, char **argv)
                         grasp_contact_ready = true;
                         grasp_acquired_once = true;
                         grasp_just_acquired = first_acquisition;
+                        if (first_acquisition) {
+                            // 접촉 순간의 실제 손바닥 중심을 task-space 기준으로 저장한다.
+                            realtime_ref_L = xL_actual;
+                            realtime_ref_R = xR_actual;
+                            realtime_lift_ticks = 0;
+                            realtime_lift_active = true;
+                            ROS_INFO("Realtime task-space lift armed at contact: zL=%.3f zR=%.3f",
+                                     realtime_ref_L.z(), realtime_ref_R.z());
+                        }
                         ROS_INFO("Grasp face-contact ready: |Fy_L|=%.2f N |Fy_R|=%.2f N, |tau_xz_L|=[%.3f %.3f], |tau_xz_R|=[%.3f %.3f]",
                                  compressive_force_L, compressive_force_R,
                                  std::abs(left_ft_torque_lpf(0)), std::abs(left_ft_torque_lpf(2)),
@@ -1244,9 +1268,8 @@ int main(int argc, char **argv)
                 }
             }
 
-            // 1차원 어드미턴스를 각 손바닥 법선 방향으로 적분한다.
-            // left/right_adm_pos(1)는 world-Y 변위가 아니라 inward normal을
-            // 따라간 스칼라 변위이며, 아래에서 world Cartesian 벡터로 변환한다.
+            // 1차원 어드미턴스를 양손 중심선 방향으로 적분한다.
+            // left/right_adm_pos(1)는 중심선을 따라가는 스칼라 변위다.
             const double active_squeeze_force = DESIRED_SQUEEZE_FORCE;
             const double acc_L = (active_squeeze_force - compressive_force_L
                 - Da_left[1] * left_adm_vel(1)) / Ma_left[1];
@@ -1260,10 +1283,54 @@ int main(int argc, char **argv)
             right_adm_pos(1) += right_adm_vel(1) * SAMPLING_TIME;
             left_adm_pos(1) = std::max(-ADMITTANCE_POS_LIMIT, std::min(ADMITTANCE_POS_LIMIT, left_adm_pos(1)));
             right_adm_pos(1) = std::max(-ADMITTANCE_POS_LIMIT, std::min(ADMITTANCE_POS_LIMIT, right_adm_pos(1)));
-            const Vector3d offset_L = normal_L * left_adm_pos(1);
-            const Vector3d offset_R = normal_R * right_adm_pos(1);
-            const Vector3d offset_vel_L = normal_L * left_adm_vel(1);
-            const Vector3d offset_vel_R = normal_R * right_adm_vel(1);
+            const Vector3d offset_L = squeeze_axis_L * left_adm_pos(1);
+            const Vector3d offset_R = squeeze_axis_R * right_adm_pos(1);
+            const Vector3d offset_vel_L = squeeze_axis_L * left_adm_vel(1);
+            const Vector3d offset_vel_R = squeeze_axis_R * right_adm_vel(1);
+
+            // 실시간 task-space 리프트: 파지 시 저장한 실제 접촉점을 기준으로
+            // 힘 방향 순응량과 world-Z 상승량을 합성하고, 매 tick arm-only IK를
+            // 다시 푼다. 이 경로에서는 미리 계산한 lift 관절열을 사용하지 않는다.
+            if (realtime_lift_active && grasp_acquired_once && grasp_contact_ready) {
+                const double lift_alpha = std::min(1.0,
+                    static_cast<double>(realtime_lift_ticks + 1) / REALTIME_LIFT_TICKS);
+                const Vector3d rtL = realtime_ref_L + squeeze_axis_L * left_adm_pos(1)
+                                   + Vector3d(0.0, 0.0, 0.08 * lift_alpha);
+                const Vector3d rtR = realtime_ref_R + squeeze_axis_R * right_adm_pos(1)
+                                   + Vector3d(0.0, 0.0, 0.08 * lift_alpha);
+                Vector3d ikL_rt, ikR_rt;
+                mapContactTargetsToIkTargets(dual_arm_jointp_vec, rtL, rtR, ikL_rt, ikR_rt);
+                VectorXd q_rt;
+                dualarm.SolveIK_Position(model, data, l_ik_EE, r_ik_EE,
+                                         ikL_rt, ikR_rt, dual_arm_jointp_vec, q_rt);
+                dual_arm_targetp_vec = q_rt;
+                dual_arm_targetv_vec.setZero();
+                // 힘 손실 중에는 grasp_contact_ready=false가 되어 이 블록 자체가
+                // 실행되지 않는다. 따라서 복구 동안 lift 진행도와 z 목표가 동결되고,
+                // 회복 후 같은 높이에서 다시 시작한다.
+                ++realtime_lift_ticks;
+                if (realtime_lift_ticks >= REALTIME_LIFT_TICKS) {
+                    realtime_lift_active = false;
+                    realtime_lift_hold_active = true;
+                    realtime_lift_hold_ticks = 0;
+                    realtime_lift_hold_q = q_rt;
+                    ROS_INFO("Realtime task-space lift complete; holding final lift pose before transport.");
+                }
+                ROS_INFO_THROTTLE(1.0, "Realtime lift: alpha=%.2f z=[%.3f %.3f] Fline=[%.2f %.2f]",
+                                  lift_alpha, rtL.z(), rtR.z(),
+                                  compressive_force_L, compressive_force_R);
+            }
+
+            if (realtime_lift_hold_active) {
+                dual_arm_targetp_vec = realtime_lift_hold_q;
+                dual_arm_targetv_vec.setZero();
+                ++realtime_lift_hold_ticks;
+                if (realtime_lift_hold_ticks >= REALTIME_LIFT_HOLD_TICKS) {
+                    realtime_lift_hold_active = false;
+                    traj_cnt = std::max(grasp_gate_row, 0);
+                    ROS_INFO("Lift hold complete; resuming transport trajectory.");
+                }
+            }
 
             VectorXd dq_adm_L = dualarm.DampedPinv(JL_arm, ADMITTANCE_DLS_LAMBDA) * offset_L;
             VectorXd dq_adm_R = dualarm.DampedPinv(JR_arm, ADMITTANCE_DLS_LAMBDA) * offset_R;
@@ -1272,8 +1339,8 @@ int main(int argc, char **argv)
 
             ROS_INFO_THROTTLE(
                 1.0,
-                "Squeeze diag: gap actual=%.3f nominal=%.3f m, admNormal L/R=[%.3f %.3f] m, "
-                "Fnormal L/R=[%.2f %.2f] N, dq_norm L/R=[%.3f %.3f]",
+                "Squeeze diag: gap actual=%.3f nominal=%.3f m, admLine L/R=[%.3f %.3f] m, "
+                "Fline L/R=[%.2f %.2f] N, dq_norm L/R=[%.3f %.3f]",
                 std::abs(xL_actual(1) - xR_actual(1)),
                 std::abs(xL_nominal(1) - xR_nominal(1)),
                 left_adm_pos(1), right_adm_pos(1),
@@ -1285,6 +1352,7 @@ int main(int argc, char **argv)
                 dual_arm_targetv_vec(L_FORCE_JOINT_IDX[i]) += dq_adm_dot_L(i);
                 dual_arm_targetv_vec(R_FORCE_JOINT_IDX[i]) += dq_adm_dot_R(i);
             }
+
 
             // The nominal IK applies these posture limits before admittance.
             // Reapply them to the final command so Cartesian squeeze cannot
