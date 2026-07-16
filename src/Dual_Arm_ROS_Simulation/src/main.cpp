@@ -330,6 +330,9 @@ int main(int argc, char **argv)
     // TaskPhase 자동전환 알림 + 궤적 실행 완료 알림 (vision pick 진행상황을 외부에서 관측 가능)
     ros::Publisher task_phase_pub = nh.advertise<std_msgs::Int32>("/dual_arm/TaskPhase", 10);
     ros::Publisher dual_armtraj_done_pub = nh.advertise<std_msgs::Bool>("/dual_arm/TrajectoryDone", 10);
+    ros::Publisher left_grasp_force_pub = nh.advertise<std_msgs::Float64>("/dual_arm/grasp_force_left", 20);
+    ros::Publisher right_grasp_force_pub = nh.advertise<std_msgs::Float64>("/dual_arm/grasp_force_right", 20);
+    ros::Publisher grasp_force_target_pub = nh.advertise<std_msgs::Float64>("/dual_arm/grasp_force_target", 20);
     int prev_task_phase = task_phase;   // 값이 바뀔 때만 발행 (edge-trigger)
 
     // ArUco pose(카메라 프레임) -> world 프레임 변환용
@@ -544,7 +547,10 @@ int main(int argc, char **argv)
         //   수직 하강으로 바꿔 초기 raised-arm 불안정을 피한다.
         const double BOX_HALF_Y = 0.160;
         const double CONTACT_X_BIAS = -0.020;     // 몸쪽(-x)으로 더 당겨 손이 큐브 앞쪽이 아니라 옆면 중앙을 잡게 함
-        const double CONTACT_Z_BIAS = -0.070;     // 시각 확인 결과 패드 접촉점을 추가로 3cm 아래로 보정
+        // 박스 중심 높이에 패드 중심을 맞춘다. 패드 높이는 9 cm이고 받침대
+        // 상단은 박스 바닥과 같으므로, 이전 -7 cm 목표는 패드 하단이
+        // 받침대를 2.6 cm 관통해 F/T 센서가 박스 대신 받침대 반력을 읽었다.
+        const double CONTACT_Z_BIAS = 0.000;
         const double CONTACT_FACE_INSET = 0.008;  // 첫 접촉 시 face 안쪽 침투량 [m]
         const double SQUEEZE_FACE_INSET = 0.028;  // 양쪽 grip pad가 큐브 면에 확실히 닿도록 손당 12mm 추가 squeeze
         const double ARM_RAISE_Z = 0.16;          // 차렷 후 먼저 제자리에서 들어올릴 높이 [m]
@@ -589,8 +595,13 @@ int main(int argc, char **argv)
         grasp_gate_row = -1;
         grasp_gate_end_row = -1;
         grasp_contact_ready = false;
+        grasp_acquired_once = false;
         grasp_contact_ticks = 0;
         grasp_post_contact_hold_ticks = 0;
+        left_adm_recenter_count = 0;
+        right_adm_recenter_count = 0;
+        left_adm_recenter_cooldown = 0;
+        right_adm_recenter_cooldown = 0;
 
         // Cartesian 직선 구간 하나를 만들어 세그먼트 목록에 추가.
         // CartesianLineTrajectory로 6D(L+R) 직선 경로를 만들고, 매 웨이포인트마다 DLS IK를 풀어
@@ -666,7 +677,7 @@ int main(int argc, char **argv)
         }
 
         // 6) 추가 압착 상태에서 수직으로 들어올리기. 이 구간부터 어드미턴스가 계속 켜진 상태다.
-        addCartesianSegment(squeezeL, liftL, squeezeR, liftR, PHASE_GRASP_TO_PLACE, 0.025);
+        addCartesianSegment(squeezeL, liftL, squeezeR, liftR, PHASE_GRASP_TO_PLACE, 0.010);
 
         // 7) 들어올린 높이를 유지한 채 목표 지점으로 이동 (계속 PHASE_GRASP_TO_PLACE, 스퀴즈 유지)
         addCartesianSegment(liftL, transportL, liftR, transportR, PHASE_GRASP_TO_PLACE, 0.035);
@@ -1003,8 +1014,13 @@ int main(int argc, char **argv)
             if (grasp_gate_row > 0 &&
                 traj_cnt >= grasp_gate_row &&
                 (grasp_gate_end_row < 0 || traj_cnt < grasp_gate_end_row)) {
-                if (!grasp_contact_ready) {
+                if (!grasp_acquired_once) {
                     traj_cnt = grasp_gate_row - 1;  // 마지막 squeeze row에 고정, bilateral contact 전에는 lift 금지
+                    grasp_gate_holding = true;
+                } else if (!grasp_contact_ready) {
+                    // 이동 중 파지력이 약해졌을 때 squeeze 구간으로 되감지 않는다.
+                    // 현재 명목 자세를 유지한 채 arm-only admittance가 10N을
+                    // 복구하도록 기다린 뒤, 같은 trajectory row부터 재개한다.
                     grasp_gate_holding = true;
                 } else if (grasp_post_contact_hold_ticks < GRASP_POST_CONTACT_HOLD_TICKS) {
                     traj_cnt = grasp_gate_row - 1;  // 접촉 직후 그대로 더 조여서 면접촉을 안정화
@@ -1032,7 +1048,9 @@ int main(int argc, char **argv)
                 task_phase = next_phase;
             }
 
-            traj_cnt++;
+            if (!grasp_gate_holding) {
+                traj_cnt++;
+            }
         }
         else {
             // 마지막 타겟 자세 유지
@@ -1085,6 +1103,7 @@ int main(int argc, char **argv)
         // 그 오프셋을 arm-only Jacobian으로 관절 목표 위치/속도에 반영한다.
         bool admittance_active = (task_phase == PHASE_GRASP_TO_PLACE);
         if (admittance_active) {
+            bool grasp_just_acquired = false;
             // 실제 관절 상태에서의 FK/자코비안
             pinocchio::computeJointJacobians(model, data, dual_arm_jointp_vec);
             pinocchio::updateFramePlacements(model, data);
@@ -1100,12 +1119,17 @@ int main(int argc, char **argv)
             pinocchio::getFrameJacobian(model, data, r_contact_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR_full);
             MatrixXd JL = JL_full.topRows<3>();   // 위치 3행만 (DoF 열)
             MatrixXd JR = JR_full.topRows<3>();
-            constexpr int FORCE_CONTROL_DOF = 4;  // shoulder 3축 + elbow; wrist yaw 제외
+            // Keep shoulder roll out of the unconstrained DLS solve. Including
+            // it spreads the minimum-norm correction into roll, then the
+            // posture clamp below discards that part and weakens both hands.
+            constexpr int FORCE_CONTROL_DOF = 3;
+            constexpr int L_FORCE_JOINT_IDX[FORCE_CONTROL_DOF] = {3, 5, 6};
+            constexpr int R_FORCE_JOINT_IDX[FORCE_CONTROL_DOF] = {8, 10, 11};
             MatrixXd JL_arm(3, FORCE_CONTROL_DOF);
             MatrixXd JR_arm(3, FORCE_CONTROL_DOF);
             for (int c = 0; c < FORCE_CONTROL_DOF; ++c) {
-                JL_arm.col(c) = JL.col(c + 3);
-                JR_arm.col(c) = JR.col(c + 8);
+                JL_arm.col(c) = JL.col(L_FORCE_JOINT_IDX[c]);
+                JR_arm.col(c) = JR.col(R_FORCE_JOINT_IDX[c]);
             }
 
             // nominal target EE 위치 (target 궤적 기준 FK)
@@ -1128,21 +1152,89 @@ int main(int argc, char **argv)
             // F/T 센서 힘: 센서가 EE 프레임과 동일 방향으로 장착되었다고 가정하고 world frame으로 변환
             Vector3d F_ext_L = RL_actual * left_ft_force_lpf;
             Vector3d F_ext_R = RR_actual * right_ft_force_lpf;
-            if (!grasp_contact_ready) {
-                const bool left_contact_ok = std::abs(F_ext_L(1)) >= GRASP_CONTACT_FORCE_THRESHOLD;
-                const bool right_contact_ok = std::abs(F_ext_R(1)) >= GRASP_CONTACT_FORCE_THRESHOLD;
-                const bool left_face_ok =
+            // 각 패드의 local-Y 축을 실제 손바닥 법선으로 사용하되, 부호는
+            // 항상 반대편 손을 향하도록 정규화한다. 따라서 허리/팔/손목이
+            // 회전해도 힘 제어 방향이 world-Y에 고정되지 않는다.
+            const Vector3d left_to_right = (xR_actual - xL_actual).normalized();
+            Vector3d normal_L = RL_actual.col(1);
+            Vector3d normal_R = RR_actual.col(1);
+            if (normal_L.dot(left_to_right) < 0.0) normal_L = -normal_L;
+            if (normal_R.dot(-left_to_right) < 0.0) normal_R = -normal_R;
+            const double compressive_force_L = std::max(0.0, -F_ext_L.dot(normal_L));
+            const double compressive_force_R = std::max(0.0, -F_ext_R.dot(normal_R));
+            std_msgs::Float64 left_grasp_force_msg;
+            std_msgs::Float64 right_grasp_force_msg;
+            std_msgs::Float64 grasp_force_target_msg;
+            left_grasp_force_msg.data = compressive_force_L;
+            right_grasp_force_msg.data = compressive_force_R;
+            // 파지 phase에서는 손목 정렬 여부와 무관하게 항상 10N을 명령한다.
+            // 손목은 이 접촉력을 유지한 상태에서 수동적으로 면을 따라 정렬한다.
+            grasp_force_target_msg.data = DESIRED_SQUEEZE_FORCE;
+            left_grasp_force_pub.publish(left_grasp_force_msg);
+            right_grasp_force_pub.publish(right_grasp_force_msg);
+            grasp_force_target_pub.publish(grasp_force_target_msg);
+            if (grasp_contact_ready) {
+                if (compressive_force_L < GRASP_FORCE_LOSS_THRESHOLD ||
+                    compressive_force_R < GRASP_FORCE_LOSS_THRESHOLD) {
+                    grasp_force_loss_ticks++;
+                    if (grasp_force_loss_ticks >= GRASP_FORCE_LOSS_TICKS) {
+                        grasp_contact_ready = false;
+                        grasp_contact_ticks = 0;
+                        grasp_post_contact_hold_ticks = 0;
+                        grasp_force_loss_ticks = 0;
+                        // Once full face contact has been established, a brief
+                        // force dip is a transport disturbance rather than a
+                        // new alignment operation.  Preserve the compliant
+                        // wrist alignment and let bilateral force recovery
+                        // resume the held trajectory row.
+                        wrist_alignment_ready = grasp_acquired_once;
+                        wrist_alignment_ticks = 0;
+                        ROS_WARN("Grasp force lost during motion; pausing nominal motion for admittance recovery (|Fy|=[%.2f %.2f] N)",
+                                 compressive_force_L, compressive_force_R);
+                    }
+                } else {
+                    grasp_force_loss_ticks = 0;
+                }
+            }
+            if (!wrist_alignment_ready) {
+                const bool alignment_contact =
+                    compressive_force_L >= WRIST_ALIGN_CONTACT_FORCE &&
+                    compressive_force_R >= WRIST_ALIGN_CONTACT_FORCE;
+                const bool alignment_torque_ok =
+                    std::abs(left_ft_torque_lpf(0)) <= WRIST_ALIGN_TORQUE_THRESHOLD &&
+                    std::abs(left_ft_torque_lpf(2)) <= WRIST_ALIGN_TORQUE_THRESHOLD &&
+                    std::abs(right_ft_torque_lpf(0)) <= WRIST_ALIGN_TORQUE_THRESHOLD &&
+                    std::abs(right_ft_torque_lpf(2)) <= WRIST_ALIGN_TORQUE_THRESHOLD;
+                if (alignment_contact && alignment_torque_ok) {
+                    wrist_alignment_ticks++;
+                    if (wrist_alignment_ticks >= WRIST_ALIGN_HOLD_TICKS) {
+                        wrist_alignment_ready = true;
+                        ROS_INFO("Wrist face alignment ready (wrist remains compliant): qL=%.3f qR=%.3f rad, |Fy|=[%.2f %.2f] N",
+                                 dual_arm_jointp[7], dual_arm_jointp[12],
+                                 compressive_force_L, compressive_force_R);
+                    }
+                } else {
+                    wrist_alignment_ticks = 0;
+                }
+            }
+            if (wrist_alignment_ready && !grasp_contact_ready) {
+                const bool left_contact_ok = compressive_force_L >= GRASP_CONTACT_FORCE_THRESHOLD;
+                const bool right_contact_ok = compressive_force_R >= GRASP_CONTACT_FORCE_THRESHOLD;
+                const bool left_face_ok = grasp_acquired_once ||
                     std::abs(left_ft_torque_lpf(0)) <= GRASP_FACE_CONTACT_TORQUE_THRESHOLD &&
                     std::abs(left_ft_torque_lpf(2)) <= GRASP_FACE_CONTACT_TORQUE_THRESHOLD;
-                const bool right_face_ok =
+                const bool right_face_ok = grasp_acquired_once ||
                     std::abs(right_ft_torque_lpf(0)) <= GRASP_FACE_CONTACT_TORQUE_THRESHOLD &&
                     std::abs(right_ft_torque_lpf(2)) <= GRASP_FACE_CONTACT_TORQUE_THRESHOLD;
                 if (left_contact_ok && right_contact_ok && left_face_ok && right_face_ok) {
                     grasp_contact_ticks++;
                     if (grasp_contact_ticks >= GRASP_CONTACT_HOLD_TICKS) {
+                        const bool first_acquisition = !grasp_acquired_once;
                         grasp_contact_ready = true;
+                        grasp_acquired_once = true;
+                        grasp_just_acquired = first_acquisition;
                         ROS_INFO("Grasp face-contact ready: |Fy_L|=%.2f N |Fy_R|=%.2f N, |tau_xz_L|=[%.3f %.3f], |tau_xz_R|=[%.3f %.3f]",
-                                 std::abs(F_ext_L(1)), std::abs(F_ext_R(1)),
+                                 compressive_force_L, compressive_force_R,
                                  std::abs(left_ft_torque_lpf(0)), std::abs(left_ft_torque_lpf(2)),
                                  std::abs(right_ft_torque_lpf(0)), std::abs(right_ft_torque_lpf(2)));
                     }
@@ -1152,60 +1244,144 @@ int main(int argc, char **argv)
                 }
             }
 
-            Vector3d xL_adm_ddot = Vector3d::Zero();
-            Vector3d xR_adm_ddot = Vector3d::Zero();
-            // The fixed-joint F/T sensors also measure the palm's own weight.
-            // Integrating all three axes therefore pulls both hands away from
-            // the Cartesian path while waiting at the grasp gate.  Compliance
-            // is needed only along the opposing palm normals (world Y); keep
-            // X/Z on the nominal IK path until wrench bias compensation exists.
-            Vector3d F_ctrl_L = Vector3d::Zero();
-            Vector3d F_ctrl_R = Vector3d::Zero();
-            F_ctrl_L(1) = F_ext_L(1) - DESIRED_SQUEEZE_FORCE;
-            F_ctrl_R(1) = F_ext_R(1) + DESIRED_SQUEEZE_FORCE;
-            for (int k = 0; k < 3; k++) {
-                if (k != 1) {
-                    left_adm_pos(k) = 0.0;
-                    right_adm_pos(k) = 0.0;
-                    left_adm_vel(k) = 0.0;
-                    right_adm_vel(k) = 0.0;
-                    continue;
-                }
-                xL_adm_ddot(k) = (F_ctrl_L(k) - Da_left[k] * left_adm_vel(k) - Ka_left[k] * left_adm_pos(k)) / Ma_left[k];
-                xR_adm_ddot(k) = (F_ctrl_R(k) - Da_right[k] * right_adm_vel(k) - Ka_right[k] * right_adm_pos(k)) / Ma_right[k];
+            // 1차원 어드미턴스를 각 손바닥 법선 방향으로 적분한다.
+            // left/right_adm_pos(1)는 world-Y 변위가 아니라 inward normal을
+            // 따라간 스칼라 변위이며, 아래에서 world Cartesian 벡터로 변환한다.
+            const double active_squeeze_force = DESIRED_SQUEEZE_FORCE;
+            const double acc_L = (active_squeeze_force - compressive_force_L
+                - Da_left[1] * left_adm_vel(1)) / Ma_left[1];
+            const double acc_R = (active_squeeze_force - compressive_force_R
+                - Da_right[1] * right_adm_vel(1)) / Ma_right[1];
+            left_adm_vel(1) += acc_L * SAMPLING_TIME;
+            right_adm_vel(1) += acc_R * SAMPLING_TIME;
+            left_adm_vel(1) = std::max(-ADMITTANCE_VEL_LIMIT, std::min(ADMITTANCE_VEL_LIMIT, left_adm_vel(1)));
+            right_adm_vel(1) = std::max(-ADMITTANCE_VEL_LIMIT, std::min(ADMITTANCE_VEL_LIMIT, right_adm_vel(1)));
+            left_adm_pos(1) += left_adm_vel(1) * SAMPLING_TIME;
+            right_adm_pos(1) += right_adm_vel(1) * SAMPLING_TIME;
+            left_adm_pos(1) = std::max(-ADMITTANCE_POS_LIMIT, std::min(ADMITTANCE_POS_LIMIT, left_adm_pos(1)));
+            right_adm_pos(1) = std::max(-ADMITTANCE_POS_LIMIT, std::min(ADMITTANCE_POS_LIMIT, right_adm_pos(1)));
+            const Vector3d offset_L = normal_L * left_adm_pos(1);
+            const Vector3d offset_R = normal_R * right_adm_pos(1);
+            const Vector3d offset_vel_L = normal_L * left_adm_vel(1);
+            const Vector3d offset_vel_R = normal_R * right_adm_vel(1);
 
-                left_adm_vel(k) += xL_adm_ddot(k) * SAMPLING_TIME;
-                right_adm_vel(k) += xR_adm_ddot(k) * SAMPLING_TIME;
-
-                left_adm_vel(k) = std::max(-ADMITTANCE_VEL_LIMIT, std::min(ADMITTANCE_VEL_LIMIT, left_adm_vel(k)));
-                right_adm_vel(k) = std::max(-ADMITTANCE_VEL_LIMIT, std::min(ADMITTANCE_VEL_LIMIT, right_adm_vel(k)));
-
-                left_adm_pos(k) += left_adm_vel(k) * SAMPLING_TIME;
-                right_adm_pos(k) += right_adm_vel(k) * SAMPLING_TIME;
-
-                left_adm_pos(k) = std::max(-ADMITTANCE_POS_LIMIT, std::min(ADMITTANCE_POS_LIMIT, left_adm_pos(k)));
-                right_adm_pos(k) = std::max(-ADMITTANCE_POS_LIMIT, std::min(ADMITTANCE_POS_LIMIT, right_adm_pos(k)));
-            }
-
-            VectorXd dq_adm_L = dualarm.DampedPinv(JL_arm, ADMITTANCE_DLS_LAMBDA) * left_adm_pos;
-            VectorXd dq_adm_R = dualarm.DampedPinv(JR_arm, ADMITTANCE_DLS_LAMBDA) * right_adm_pos;
-            VectorXd dq_adm_dot_L = dualarm.DampedPinv(JL_arm, ADMITTANCE_DLS_LAMBDA) * left_adm_vel;
-            VectorXd dq_adm_dot_R = dualarm.DampedPinv(JR_arm, ADMITTANCE_DLS_LAMBDA) * right_adm_vel;
+            VectorXd dq_adm_L = dualarm.DampedPinv(JL_arm, ADMITTANCE_DLS_LAMBDA) * offset_L;
+            VectorXd dq_adm_R = dualarm.DampedPinv(JR_arm, ADMITTANCE_DLS_LAMBDA) * offset_R;
+            VectorXd dq_adm_dot_L = dualarm.DampedPinv(JL_arm, ADMITTANCE_DLS_LAMBDA) * offset_vel_L;
+            VectorXd dq_adm_dot_R = dualarm.DampedPinv(JR_arm, ADMITTANCE_DLS_LAMBDA) * offset_vel_R;
 
             ROS_INFO_THROTTLE(
                 1.0,
-                "Squeeze diag: gap actual=%.3f nominal=%.3f m, admY L/R=[%.3f %.3f] m, "
-                "Fy_world L/R=[%.2f %.2f] N, dq_norm L/R=[%.3f %.3f]",
+                "Squeeze diag: gap actual=%.3f nominal=%.3f m, admNormal L/R=[%.3f %.3f] m, "
+                "Fnormal L/R=[%.2f %.2f] N, dq_norm L/R=[%.3f %.3f]",
                 std::abs(xL_actual(1) - xR_actual(1)),
                 std::abs(xL_nominal(1) - xR_nominal(1)),
                 left_adm_pos(1), right_adm_pos(1),
-                F_ext_L(1), F_ext_R(1), dq_adm_L.norm(), dq_adm_R.norm());
+                compressive_force_L, compressive_force_R, dq_adm_L.norm(), dq_adm_R.norm());
 
             for (int i = 0; i < FORCE_CONTROL_DOF; ++i) {
-                dual_arm_targetp_vec(i + 3) += dq_adm_L(i);
-                dual_arm_targetp_vec(i + 8) += dq_adm_R(i);
-                dual_arm_targetv_vec(i + 3) += dq_adm_dot_L(i);
-                dual_arm_targetv_vec(i + 8) += dq_adm_dot_R(i);
+                dual_arm_targetp_vec(L_FORCE_JOINT_IDX[i]) += dq_adm_L(i);
+                dual_arm_targetp_vec(R_FORCE_JOINT_IDX[i]) += dq_adm_R(i);
+                dual_arm_targetv_vec(L_FORCE_JOINT_IDX[i]) += dq_adm_dot_L(i);
+                dual_arm_targetv_vec(R_FORCE_JOINT_IDX[i]) += dq_adm_dot_R(i);
+            }
+
+            // The nominal IK applies these posture limits before admittance.
+            // Reapply them to the final command so Cartesian squeeze cannot
+            // fold the elbows inward or inherit a wrist-limit seed.
+            constexpr double MAX_INWARD_SHOULDER_ROLL = 0.15;
+            constexpr int L_SHOULDER_ROLL_IDX = 4;
+            constexpr int L_WRIST_YAW_IDX = 7;
+            constexpr int R_SHOULDER_ROLL_IDX = 9;
+            constexpr int R_WRIST_YAW_IDX = 12;
+            if (dual_arm_targetp_vec(L_SHOULDER_ROLL_IDX) < -MAX_INWARD_SHOULDER_ROLL) {
+                dual_arm_targetp_vec(L_SHOULDER_ROLL_IDX) = -MAX_INWARD_SHOULDER_ROLL;
+                dual_arm_targetv_vec(L_SHOULDER_ROLL_IDX) = 0.0;
+            }
+            if (dual_arm_targetp_vec(R_SHOULDER_ROLL_IDX) > MAX_INWARD_SHOULDER_ROLL) {
+                dual_arm_targetp_vec(R_SHOULDER_ROLL_IDX) = MAX_INWARD_SHOULDER_ROLL;
+                dual_arm_targetv_vec(R_SHOULDER_ROLL_IDX) = 0.0;
+            }
+            // Wrist yaw는 파지 중 각도를 잠그지 않는다. 매 tick 실제 각도를
+            // nominal target으로 사용해 위치 스프링을 없애고 접촉면을 따라
+            // 수동적으로 회전할 수 있게 한다.
+            dual_arm_targetp_vec(L_WRIST_YAW_IDX) = dual_arm_jointp[L_WRIST_YAW_IDX];
+            dual_arm_targetp_vec(R_WRIST_YAW_IDX) = dual_arm_jointp[R_WRIST_YAW_IDX];
+            dual_arm_targetv_vec(L_WRIST_YAW_IDX) = 0.0;
+            dual_arm_targetv_vec(R_WRIST_YAW_IDX) = 0.0;
+
+            if (grasp_just_acquired &&
+                traj_cnt >= 0 && traj_cnt < dual_arm_jointp_trajectory.rows()) {
+                // Contact를 만드는 동안 사용한 compliance offset을 이후 이동용
+                // 여유로 계속 들고 있으면 곧바로 +/-5cm limit에 포화된다.
+                // 현재 보정된 arm target을 새 nominal grasp pose로 흡수하고,
+                // 현재 파지 자세를 연속적으로 유지하면서 admittance travel을
+                // 다시 확보하기 위해 이후 명목 궤적에 같은 joint offset을 적용한다.
+                for (int i = 0; i < FORCE_CONTROL_DOF; ++i) {
+                    const int joints[2] = {L_FORCE_JOINT_IDX[i], R_FORCE_JOINT_IDX[i]};
+                    for (const int joint : joints) {
+                        const double nominal_now = dual_arm_jointp_trajectory(traj_cnt, joint);
+                        const double rebase_delta = dual_arm_targetp_vec(joint) - nominal_now;
+                        dual_arm_jointp_trajectory.block(
+                            traj_cnt, joint,
+                            dual_arm_jointp_trajectory.rows() - traj_cnt, 1).array() += rebase_delta;
+                    }
+                }
+                left_adm_pos.setZero();
+                left_adm_vel.setZero();
+                right_adm_pos.setZero();
+                right_adm_vel.setZero();
+                ROS_INFO("Admittance recentered at acquired grasp; full compliance travel restored for transport.");
+            }
+
+            // 이동 중 한쪽 팔이 compliance limit에 붙더라도 양팔의 현재
+            // 보정 자세를 동시에 nominal trajectory에 흡수한다. 한 팔만
+            // 옮기면 다음 row부터 상대 파지 자세가 바뀌어 반대 손의 힘이
+            // 튀므로, 물체를 사이에 둔 bilateral equilibrium을 보존한다.
+            if (left_adm_recenter_cooldown > 0) --left_adm_recenter_cooldown;
+            if (right_adm_recenter_cooldown > 0) --right_adm_recenter_cooldown;
+            // The initial acquisition rebase above is sufficient.  Rebasing
+            // again during lift changes the future bilateral joint path and
+            // was observed to tilt the box and stop the lift after ~1.7 cm.
+            constexpr int MAX_ADM_RECENTERS_PER_ARM = 0;
+            constexpr int ADM_RECENTER_COOLDOWN_TICKS = 2000;
+            constexpr double ADM_RECENTER_TRIGGER = 0.045;
+            constexpr double ADM_RECENTER_FORCE_CEILING = 9.2;
+            auto rebaseArmTrajectory = [&](const int* joint_indices) {
+                for (int i = 0; i < FORCE_CONTROL_DOF; ++i) {
+                    const int joint = joint_indices[i];
+                    const double nominal_now = dual_arm_jointp_trajectory(traj_cnt, joint);
+                    const double rebase_delta = dual_arm_targetp_vec(joint) - nominal_now;
+                    dual_arm_jointp_trajectory.block(
+                        traj_cnt, joint,
+                        dual_arm_jointp_trajectory.rows() - traj_cnt, 1).array() += rebase_delta;
+                }
+            };
+            const bool left_recenter_needed =
+                left_adm_pos(1) >= ADM_RECENTER_TRIGGER &&
+                compressive_force_L < ADM_RECENTER_FORCE_CEILING;
+            const bool right_recenter_needed =
+                right_adm_pos(1) >= ADM_RECENTER_TRIGGER &&
+                compressive_force_R < ADM_RECENTER_FORCE_CEILING;
+            if (traj_cnt >= 0 && traj_cnt < dual_arm_jointp_trajectory.rows() &&
+                grasp_acquired_once && !grasp_just_acquired &&
+                left_adm_recenter_count < MAX_ADM_RECENTERS_PER_ARM &&
+                right_adm_recenter_count < MAX_ADM_RECENTERS_PER_ARM &&
+                left_adm_recenter_cooldown == 0 &&
+                right_adm_recenter_cooldown == 0 &&
+                (left_recenter_needed || right_recenter_needed)) {
+                rebaseArmTrajectory(L_FORCE_JOINT_IDX);
+                rebaseArmTrajectory(R_FORCE_JOINT_IDX);
+                left_adm_pos.setZero();
+                left_adm_vel.setZero();
+                right_adm_pos.setZero();
+                right_adm_vel.setZero();
+                ++left_adm_recenter_count;
+                ++right_adm_recenter_count;
+                left_adm_recenter_cooldown = ADM_RECENTER_COOLDOWN_TICKS;
+                right_adm_recenter_cooldown = ADM_RECENTER_COOLDOWN_TICKS;
+                ROS_INFO("Bilateral admittance equilibrium recentered (%d/%d).",
+                         left_adm_recenter_count, MAX_ADM_RECENTERS_PER_ARM);
             }
 
             for (int i = 0; i < DoF; ++i) {
@@ -1219,10 +1395,18 @@ int main(int argc, char **argv)
             left_adm_vel.setZero();
             right_adm_pos.setZero();
             right_adm_vel.setZero();
+            wrist_alignment_ready = false;
+            wrist_alignment_ticks = 0;
+            grasp_force_loss_ticks = 0;
+            left_adm_recenter_count = 0;
+            right_adm_recenter_count = 0;
+            left_adm_recenter_cooldown = 0;
+            right_adm_recenter_cooldown = 0;
             grasp_contact_ticks = 0;
             grasp_post_contact_hold_ticks = 0;
             if (task_phase != PHASE_GRASP_TO_PLACE) {
                 grasp_contact_ready = false;
+                grasp_acquired_once = false;
             }
         }
 
@@ -1238,6 +1422,25 @@ int main(int argc, char **argv)
         for (int i = 0; i < DoF; i++) {
             target_torque[i] = dynamic_torque(i);
         }
+
+        // Wrist inertia is too small for acceleration-level PD through RNEA
+        // to produce a useful centering torque. Add a low-stiffness direct
+        // spring so contact can still align the pads without hitting limits.
+        constexpr double WRIST_CENTER_KP = 2.0;
+        constexpr double WRIST_CENTER_KD = 0.15;
+        constexpr int L_WRIST_YAW_IDX = 7;
+        constexpr int R_WRIST_YAW_IDX = 12;
+        // 접근 중에는 중앙으로 복귀시키되, 파지가 시작되면 위치 강성을
+        // 완전히 제거해 손목이 접촉면을 따라 계속 순응하게 한다.
+        const double wrist_target_l = admittance_active ? dual_arm_jointp[L_WRIST_YAW_IDX] : 0.0;
+        const double wrist_target_r = admittance_active ? dual_arm_jointp[R_WRIST_YAW_IDX] : 0.0;
+        const double wrist_kp = admittance_active ? 0.0 : WRIST_CENTER_KP;
+        target_torque[L_WRIST_YAW_IDX] +=
+            wrist_kp * (wrist_target_l - dual_arm_jointp[L_WRIST_YAW_IDX])
+            -WRIST_CENTER_KD * dual_arm_jointv[L_WRIST_YAW_IDX];
+        target_torque[R_WRIST_YAW_IDX] +=
+            wrist_kp * (wrist_target_r - dual_arm_jointp[R_WRIST_YAW_IDX])
+            -WRIST_CENTER_KD * dual_arm_jointv[R_WRIST_YAW_IDX];
 
         // for(int i = 0; i < DoF; i++){
         //     target_torque[i] = PD_torque[i];

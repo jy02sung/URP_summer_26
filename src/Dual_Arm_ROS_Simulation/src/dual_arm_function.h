@@ -128,6 +128,7 @@ int task_phase = PHASE_APPROACH;
 int grasp_gate_row = -1;         // lift 세그먼트 진입 직전(마지막 squeeze row 다음) 인덱스
 int grasp_gate_end_row = -1;     // return 세그먼트 진입 직전 인덱스; gate는 이 전까지만 유효
 bool grasp_contact_ready = false;
+bool grasp_acquired_once = false;  // 최초 파지 이후 힘 저하는 궤적 rewind 대신 제자리에서 회복
 int grasp_contact_ticks = 0;
 int grasp_post_contact_hold_ticks = 0;
 
@@ -147,10 +148,21 @@ Vector3d right_ft_torque_lpf    = Vector3d::Zero();
 Vector3d left_ft_torque_before  = Vector3d::Zero();
 Vector3d right_ft_torque_before = Vector3d::Zero();
 const double FT_LPF_CUTOFF_HZ  = 10.0;  // 컷오프 주파수 [Hz]
-const double GRASP_CONTACT_FORCE_THRESHOLD = 9.5;     // [N] 손당 10N 목표의 5% 이내에 들어와야 파지 완료
+const double GRASP_CONTACT_FORCE_THRESHOLD = 7.5;     // [N] 안정 접촉에서 nominal을 재중심화하는 기준; 제어 목표는 계속 10N
 const double GRASP_FACE_CONTACT_TORQUE_THRESHOLD = 0.25; // [N*m] 10N 파지와 넓어진 pad의 정상 모멘트 허용
 const int    GRASP_CONTACT_HOLD_TICKS = 120;         // 0.12s @ 1kHz
 const int    GRASP_POST_CONTACT_HOLD_TICKS = 500;    // 0.50s @ 1kHz, 접촉 직후 그대로 더 조여서 안정화
+const double WRIST_ALIGN_CONTACT_FORCE = 2.0;        // [N] 비접촉 영토크를 정렬 완료로 오인하지 않음
+const double WRIST_ALIGN_TORQUE_THRESHOLD = 0.15;    // [N*m] 패드 면 정렬 허용 모멘트
+const double WRIST_ALIGN_PRELOAD_FORCE = 5.0;        // [N] 정렬 중 접촉을 잃지 않는 약한 압착력
+const int    WRIST_ALIGN_HOLD_TICKS = 200;           // 0.20s @ 1kHz
+bool wrist_alignment_ready = false;
+int wrist_alignment_ticks = 0;
+int grasp_force_loss_ticks = 0;
+int left_adm_recenter_count = 0;
+int right_adm_recenter_count = 0;
+int left_adm_recenter_cooldown = 0;
+int right_adm_recenter_cooldown = 0;
 
 // 가상 스프링-댐퍼-질량 파라미터 (튜닝용): Ma*x_ddot + Da*x_dot + Ka*x = F_ext.
 // x는 nominal grasp trajectory 위에 덧붙이는 Cartesian compliance offset이다.
@@ -170,6 +182,8 @@ const double ADMITTANCE_DLS_LAMBDA = 0.05;   // Cartesian offset -> arm joint of
 const double ADMITTANCE_POS_LIMIT  = 0.05;   // nominal IK가 면에 도달한 뒤 10N까지 압착할 수 있는 변위 여유
 const double ADMITTANCE_VEL_LIMIT  = 0.25;   // 축별 최대 순응 속도 [m/s]
 const double DESIRED_SQUEEZE_FORCE = 10.0;   // [N] 양쪽 손이 각각 유지할 정상 squeeze 힘
+const double GRASP_FORCE_LOSS_THRESHOLD = 7.0; // [N] lift 중 이 값 아래면 재압착
+const int GRASP_FORCE_LOSS_TICKS = 100;        // 0.10s @ 1kHz
 
 
 
