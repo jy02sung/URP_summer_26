@@ -400,11 +400,14 @@
          STANDOFF_Y=0.15/v_des를 그대로 재현)을 처음부터 다시 풀어서, 실제 파지 순간 L_EE 프레임의
          world 자세를 구한 뒤, 원판 법선(로컬 Z축)이 파지 시점 물체 옆면 법선(월드 Y축)과 정확히
          평행해지는 방향으로 역산했다 (계산: fk_pad_calc.cpp, 일회성 도구, 커밋 안 함, dot=1.0 검증).
-         위치(origin xyz)는 기존 패드 자리를 그대로 재사용 - mesh 표면 돌출거리 재튜닝은 보류. -->
+         위치(origin xyz)는 기존 패드 자리를 그대로 재사용 - mesh 표면 돌출거리 재튜닝은 보류.
+         2026-07-17: SolveIK_Position에 null-space q_pref(elbow-down+out) 투영을 추가하면서
+         파지 시점 실제 손 자세가 달라져 재계산했다(recompute_pad_rpy.py, 일회성 도구, 커밋 안 함,
+         dot=1.0 재검증) - null-space 항이 관절 배치를 바꾸면 이 rpy도 다시 맞춰야 한다. -->
     <visual name="L_EE_grip_disc_visual">
       <origin
         xyz="0.009786 -0.030398 0.003877"
-        rpy="1.224122 -0.000000 -2.245407" />
+        rpy="0.752861 -0.000000 -3.065760" />
       <geometry>
         <cylinder radius="0.03" length="0.01" />
       </geometry>
@@ -415,7 +418,7 @@
     <collision name="L_EE_grip_disc_collision">
       <origin
         xyz="0.009786 -0.030398 0.003877"
-        rpy="1.224122 -0.000000 -2.245407" />
+        rpy="0.752861 -0.000000 -3.065760" />
       <geometry>
         <cylinder radius="0.03" length="0.01" />
       </geometry>
@@ -721,12 +724,12 @@
          그대로 재현)로 재계산하니 실제로는 dot=0.955(약 17.2° 어긋남) - L_EE(40.8°)보다는 낫지만
          무시할 수준은 아니다. L_EE와 동일한 방식으로 rpy를 target_local_dir(=R_EE^T*worldY)에
          맞춰 보정한다 (계산: fk_debug.cpp, 일회성 도구, 커밋 안 함). -->
-    <!-- 원형 접촉 패드 - L_EE 쪽 설명 참고. 동일한 방식(fk_pad_calc.cpp로 파지 파이프라인 처음부터
-         재현)으로 rpy 재계산, dot=1.0 검증. -->
+    <!-- 원형 접촉 패드 - L_EE 쪽 설명 참고. 동일한 방식(recompute_pad_rpy.py로 null-space
+         적용된 파지 파이프라인 처음부터 재현)으로 rpy 재계산, dot=1.0 검증. -->
     <visual name="R_EE_grip_disc_visual">
       <origin
         xyz="0.003329 0.035647 -0.001762"
-        rpy="1.441584 -0.000000 2.744360" />
+        rpy="1.817146 -0.000000 2.842748" />
       <geometry>
         <cylinder radius="0.03" length="0.01" />
       </geometry>
@@ -737,7 +740,7 @@
     <collision name="R_EE_grip_disc_collision">
       <origin
         xyz="0.003329 0.035647 -0.001762"
-        rpy="1.441584 -0.000000 2.744360" />
+        rpy="1.817146 -0.000000 2.842748" />
       <geometry>
         <cylinder radius="0.03" length="0.01" />
       </geometry>
