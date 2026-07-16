@@ -940,6 +940,28 @@
     <provideFeedback>true</provideFeedback>
   </gazebo>
 
+  <!-- 왼쪽/오른쪽 패드 접촉 특성 변경: 기본 kp=1e12(사실상 강체)를 낮춰 접촉 시 임펄스성 반발력을
+       줄이고, minDepth로 약간의 침투를 허용해 접촉 안정성을 높인다. L_EE/R_EE 링크(그립 원판이
+       고정 자식으로 붙어있는 링크)에 적용 - urdf2sdf 변환 시 이 링크의 모든 <collision>(mesh +
+       원판) 표면에 반영된다. -->
+  <gazebo reference="L_EE">
+    <mu1>1.2</mu1>
+    <mu2>1.2</mu2>
+    <kp>100000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.003</minDepth>
+    <maxVel>0.0</maxVel>
+  </gazebo>
+
+  <gazebo reference="R_EE">
+    <mu1>1.2</mu1>
+    <mu2>1.2</mu2>
+    <kp>100000.0</kp>
+    <kd>100.0</kd>
+    <minDepth>0.003</minDepth>
+    <maxVel>0.0</maxVel>
+  </gazebo>
+
   <!-- gazebo_ros_ft_sensor: L_EE_joint/R_EE_joint에 걸리는 반력을 각각
        /dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor (geometry_msgs/WrenchStamped)로 발행. -->
   <gazebo>
