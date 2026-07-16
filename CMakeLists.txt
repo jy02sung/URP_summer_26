@@ -6,6 +6,7 @@ find_package(pinocchio REQUIRED)
 find_package(catkin REQUIRED COMPONENTS
   roscpp
   rospy
+  roslib
   std_msgs
   message_generation
   tf
@@ -17,7 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES dual_arm
- CATKIN_DEPENDS roscpp rospy std_msgs tf geometry_msgs gazebo_msgs
+ CATKIN_DEPENDS roscpp rospy roslib std_msgs tf geometry_msgs gazebo_msgs
 )
 
 

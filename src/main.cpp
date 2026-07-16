@@ -3,6 +3,7 @@
 #include <vector>
 #include <gazebo_msgs/SpawnModel.h>
 #include <gazebo_msgs/DeleteModel.h>
+#include <ros/package.h>
 
 // place 목표 지점(이송 목표)을 눈으로 확인할 수 있도록 vision pick 명령이 들어올 때마다 스폰하는
 // 표시용 모델. static이라 물리엔진과 무관 - pedestal은 물체가 도착했을 때 실제로 받쳐주기도 하고,
@@ -276,8 +277,8 @@ int main(int argc, char **argv)
     std_msgs::Float64 shoulder_pitch_l_joint_msg, shoulder_roll_l_joint_msg, shoulder_yaw_l_joint_msg, elbow_l_joint_msg;
     std_msgs::Float64 shoulder_pitch_r_joint_msg, shoulder_roll_r_joint_msg, shoulder_yaw_r_joint_msg, elbow_r_joint_msg;
 
-    // 고정된 URDF 파일 경로 사용
-    string urdf_filename = "/home/jungmin/friend_ws/src/Dual_Arm_ROS_Simulation/urdf/dual_arm.urdf";
+    // 워크스페이스 위치에 무관하게 동작하도록 ROS 패키지 경로로 URDF를 찾는다
+    string urdf_filename = ros::package::getPath("dual_arm") + "/urdf/dual_arm.urdf";
     // Pinocchio 모델 로드
     pinocchio::Model model;
     pinocchio::urdf::buildModel(urdf_filename, model);
