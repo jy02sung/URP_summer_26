@@ -365,22 +365,30 @@
     <child link="L_wrist_yaw" />
     <axis xyz="0 0 1" />
     <dynamics damping="1" />
-    <limit lower="-0.9" upper="0.9" effort="12" velocity="4.0" />
+    <limit lower="-0.9" upper="0.9" effort="12" velocity="4" />
   </joint>
 
-  <!-- Fixed IK-only frame: give it a tiny nonzero inertial or ODE's fixed-joint
-       lumping can become ill-conditioned with a controlled joint upstream. -->
-  <link name="L_wrist_ik_frame">
+  <!-- New: pitch axis near the palm. No collision geometry, same rationale as
+       wrist_yaw (avoid self-contact impulses in the serial wrist chain). -->
+  <link name="L_wrist_pitch">
     <inertial>
-      <origin xyz="0 0 0" rpy="0 0 0" />
-      <mass value="0.001" />
-      <inertia ixx="1.0E-06" ixy="0" ixz="0" iyy="1.0E-06" iyz="0" izz="1.0E-06" />
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <mass value="0.15" />
+      <inertia ixx="0.00015" ixy="0" ixz="0" iyy="0.00015" iyz="0" izz="0.00008" />
     </inertial>
+    <visual>
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <geometry><cylinder length="0.03" radius="0.015" /></geometry>
+      <material name="wrist_dark" />
+    </visual>
   </link>
-  <joint name="L_wrist_ik_joint" type="fixed">
-    <origin xyz="0 0 -0.10" rpy="0 0 0" />
+  <joint name="L_wrist_pitch_joint" type="revolute">
+    <origin xyz="0 0 -0.12" rpy="0 0 0" />
     <parent link="L_wrist_yaw" />
-    <child link="L_wrist_ik_frame" />
+    <child link="L_wrist_pitch" />
+    <axis xyz="0 1 0" />
+    <dynamics damping="1.5" />
+    <limit lower="-0.6" upper="0.6" effort="12" velocity="3" />
   </joint>
 
   <link name="L_EE">
@@ -394,30 +402,37 @@
       <geometry><mesh filename="package://dual_arm/meshes/L_EE.STL" /></geometry>
       <material name=""><color rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" /></material>
     </visual>
-    <!-- Single flat palm collision replaces the old STL-mesh + disc-pad combo.
-         Offset/size copied from jys (0.090 x 0.025 x 0.090 box, 3.75cm out in -Y,
-         0.5cm down) - this is a placeholder mount pose to be re-tuned in Task 6
-         against this branch's actual arm geometry, same way the old disc pad
-         needed 3 rounds of offline recomputation. -->
-    <collision name="L_EE_palm_collision">
-      <origin xyz="0 0.0125 -0.005" rpy="0 0 0" />
-      <geometry><box size="0.090 0.025 0.090" /></geometry>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://dual_arm/meshes/L_EE.STL" /></geometry>
     </collision>
-    <visual name="L_EE_grip_pad_visual">
-      <origin xyz="0 0.0125 -0.005" rpy="0 0 0" />
-      <geometry><box size="0.090 0.025 0.090" /></geometry>
-      <material name="grip_pad_visual_dark"><color rgba="0.12 0.12 0.12 1" /></material>
+    <!-- Pose-independent grip pad: normal is exactly the EE local -Y axis. No
+         world-frame IK pose is baked into this geometry; wrist compliance
+         (2 DOF, not 1) does the real-time aligning. Values copied verbatim
+         from origin/box-lifting, do not re-derive. -->
+    <visual name="L_EE_grip_disc_visual">
+      <origin xyz="0 -0.0325 0" rpy="1.57079632679 0 0" />
+      <geometry><cylinder radius="0.03" length="0.01" /></geometry>
+      <material name="grip_pad_orange"><color rgba="1.0 0.5 0.0 1" /></material>
     </visual>
+    <collision name="L_EE_grip_disc_collision">
+      <origin xyz="0 -0.0325 0" rpy="1.57079632679 0 0" />
+      <geometry><cylinder radius="0.03" length="0.01" /></geometry>
+    </collision>
   </link>
   <joint name="L_EE_joint" type="fixed">
-    <origin xyz="0 0 -0.15" rpy="0 0 0" />
-    <parent link="L_wrist_yaw" />
+    <origin xyz="0 0 -0.03" rpy="0 0 0" />
+    <parent link="L_wrist_pitch" />
     <child link="L_EE" />
+    <axis xyz="0 0 0" />
+    <dynamics damping="1" />
+    <limit lower="-1.57" upper="1.57" effort="30" velocity="8.5" />
   </joint>
 
+  <!-- Contact frame at the center/orientation of the neutral grip disc -->
   <link name="L_grip_frame" />
-  <joint name="L_grip_joint" type="fixed">
-    <origin xyz="0 -0.0375 -0.005" rpy="0 0 0" />
+  <joint name="L_grip_frame_joint" type="fixed">
+    <origin xyz="0 -0.0325 0" rpy="1.57079632679 0 0" />
     <parent link="L_EE" />
     <child link="L_grip_frame" />
   </joint>
@@ -678,22 +693,28 @@
     <child link="R_wrist_yaw" />
     <axis xyz="0 0 1" />
     <dynamics damping="1" />
-    <limit lower="-0.9" upper="0.9" effort="12" velocity="4.0" />
+    <limit lower="-0.9" upper="0.9" effort="12" velocity="4" />
   </joint>
 
-  <!-- Fixed IK-only frame: give it a tiny nonzero inertial or ODE's fixed-joint
-       lumping can become ill-conditioned with a controlled joint upstream. -->
-  <link name="R_wrist_ik_frame">
+  <link name="R_wrist_pitch">
     <inertial>
-      <origin xyz="0 0 0" rpy="0 0 0" />
-      <mass value="0.001" />
-      <inertia ixx="1.0E-06" ixy="0" ixz="0" iyy="1.0E-06" iyz="0" izz="1.0E-06" />
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <mass value="0.15" />
+      <inertia ixx="0.00015" ixy="0" ixz="0" iyy="0.00015" iyz="0" izz="0.00008" />
     </inertial>
+    <visual>
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <geometry><cylinder length="0.03" radius="0.015" /></geometry>
+      <material name="wrist_dark" />
+    </visual>
   </link>
-  <joint name="R_wrist_ik_joint" type="fixed">
-    <origin xyz="0 0 -0.10" rpy="0 0 0" />
+  <joint name="R_wrist_pitch_joint" type="revolute">
+    <origin xyz="0 0 -0.12" rpy="0 0 0" />
     <parent link="R_wrist_yaw" />
-    <child link="R_wrist_ik_frame" />
+    <child link="R_wrist_pitch" />
+    <axis xyz="0 1 0" />
+    <dynamics damping="1.5" />
+    <limit lower="-0.6" upper="0.6" effort="12" velocity="3" />
   </joint>
 
   <link name="R_EE">
@@ -707,30 +728,32 @@
       <geometry><mesh filename="package://dual_arm/meshes/R_EE.STL" /></geometry>
       <material name=""><color rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" /></material>
     </visual>
-    <!-- Single flat palm collision replaces the old STL-mesh + disc-pad combo.
-         Offset/size copied from jys (0.090 x 0.025 x 0.090 box, 3.75cm out in +Y,
-         0.5cm down) - this is a placeholder mount pose to be re-tuned in Task 6
-         against this branch's actual arm geometry, same way the old disc pad
-         needed 3 rounds of offline recomputation. -->
-    <collision name="R_EE_palm_collision">
-      <origin xyz="0 -0.0125 -0.005" rpy="0 0 0" />
-      <geometry><box size="0.090 0.025 0.090" /></geometry>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://dual_arm/meshes/R_EE.STL" /></geometry>
     </collision>
-    <visual name="R_EE_grip_pad_visual">
-      <origin xyz="0 -0.0125 -0.005" rpy="0 0 0" />
-      <geometry><box size="0.090 0.025 0.090" /></geometry>
-      <material name="grip_pad_visual_dark"><color rgba="0.12 0.12 0.12 1" /></material>
+    <visual name="R_EE_grip_disc_visual">
+      <origin xyz="0 0.0325 0" rpy="-1.57079632679 0 0" />
+      <geometry><cylinder radius="0.03" length="0.01" /></geometry>
+      <material name="grip_pad_orange"><color rgba="1.0 0.5 0.0 1" /></material>
     </visual>
+    <collision name="R_EE_grip_disc_collision">
+      <origin xyz="0 0.0325 0" rpy="-1.57079632679 0 0" />
+      <geometry><cylinder radius="0.03" length="0.01" /></geometry>
+    </collision>
   </link>
   <joint name="R_EE_joint" type="fixed">
-    <origin xyz="0 0 -0.15" rpy="0 0 0" />
-    <parent link="R_wrist_yaw" />
+    <origin xyz="0 0 -0.03" rpy="0 0 0" />
+    <parent link="R_wrist_pitch" />
     <child link="R_EE" />
+    <axis xyz="0 0 0" />
+    <dynamics damping="1" />
+    <limit lower="-1.57" upper="1.57" effort="30" velocity="8.5" />
   </joint>
 
   <link name="R_grip_frame" />
-  <joint name="R_grip_joint" type="fixed">
-    <origin xyz="0 0.0375 -0.005" rpy="0 0 0" />
+  <joint name="R_grip_frame_joint" type="fixed">
+    <origin xyz="0 0.0325 0" rpy="-1.57079632679 0 0" />
     <parent link="R_EE" />
     <child link="R_grip_frame" />
   </joint>
@@ -933,6 +956,14 @@
     <minDepth>0.003</minDepth>
     <maxVel>0.0</maxVel>
   </gazebo>
+
+  <!-- Use ODE's implicit damping for the wrist axes; explicit-only damping
+       under contact-driven torque spikes contributed to the ODE explosion
+       seen in the previous plan's Task 5 Gazebo test. -->
+  <gazebo reference="L_wrist_yaw_joint"><implicitSpringDamper>true</implicitSpringDamper></gazebo>
+  <gazebo reference="R_wrist_yaw_joint"><implicitSpringDamper>true</implicitSpringDamper></gazebo>
+  <gazebo reference="L_wrist_pitch_joint"><implicitSpringDamper>true</implicitSpringDamper></gazebo>
+  <gazebo reference="R_wrist_pitch_joint"><implicitSpringDamper>true</implicitSpringDamper></gazebo>
 
   <!-- gazebo_ros_ft_sensor: L_EE_joint/R_EE_joint에 걸리는 반력을 각각
        /dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor (geometry_msgs/WrenchStamped)로 발행. -->
