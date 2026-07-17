@@ -78,12 +78,12 @@ double left_arm_torque[4] = {0,};
 double right_arm_jointp[4] = {0,};
 double right_arm_jointv[4] = {0,};
 double right_arm_torque[4] = {0,};
-// 손목 yaw(L_wy=DoF 7, R_wy=DoF 13) 상태. joint_states 콜백에서 갱신, FK/RNEA용 DoF 벡터에
-// 반영. pitch(L_wp=DoF 8, R_wp=DoF 14) 상태 배열은 Task 4에서 main.cpp의 읽기 경로와 함께 추가.
-double left_wrist_jointp[1] = {0};
-double left_wrist_jointv[1] = {0};
-double right_wrist_jointp[1] = {0};
-double right_wrist_jointv[1] = {0};
+// 손목 yaw+pitch(L_wy=DoF 7, L_wp=DoF 8, R_wy=DoF 13, R_wp=DoF 14) 상태. joint_states
+// 콜백에서 갱신, FK/RNEA용 DoF 벡터에 반영. 인덱스: [0]=yaw, [1]=pitch.
+double left_wrist_jointp[2] = {0,};
+double left_wrist_jointv[2] = {0,};
+double right_wrist_jointp[2] = {0,};
+double right_wrist_jointv[2] = {0,};
 
 double dual_arm_jointp[DoF] = {0,};
 double dual_arm_jointv[DoF] = {0,};
