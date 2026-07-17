@@ -1061,6 +1061,28 @@
       <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
       <mechanicalReduction>50</mechanicalReduction>
     </actuator>
+  </transmission>
+
+  <transmission name="tran_L_wrist">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="L_wrist_yaw_joint">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor_L_wrist">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+      <mechanicalReduction>50</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <transmission name="tran_R_wrist">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="R_wrist_yaw_joint">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor_R_wrist">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+      <mechanicalReduction>50</mechanicalReduction>
+    </actuator>
   </transmission> -->
   <!-- Effort Control -->
   <transmission name="tran1">
@@ -1169,6 +1191,26 @@
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
     </joint>
     <actuator name="motor11">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="tran_L_wrist">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="L_wrist_yaw_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor_L_wrist">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="tran_R_wrist">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="R_wrist_yaw_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor_R_wrist">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
       <mechanicalReduction>1</mechanicalReduction>
     </actuator>
