@@ -489,10 +489,36 @@ Admittance offset note:
 
 ### 통과 조건
 
-- [ ] 한쪽만 접촉하면 상승하지 않음
-- [ ] 양쪽 힘이 기준을 유지하면 파지 완료
-- [ ] 파지 완료 시 wrist 정렬각 저장
-- [ ] 힘 손실 시 현재 높이에서 상승 정지
+- [x] 한쪽만 접촉하면 상승하지 않음
+- [x] 양쪽 힘이 기준을 유지하면 파지 완료
+- [x] 파지 완료 시 wrist 정렬각 저장
+- [x] 힘 손실 시 현재 높이에서 상승 정지
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+Gate state topic: /dual_arm/grasp_gate_state
+State: WAITING(0), READY(1), PAUSED(2)
+Acquire threshold: 좌우 squeeze projection 각각 7.5 N, 연속 150 ticks (0.15 s)
+Loss threshold: 어느 한쪽이라도 6.0 N 미만 (hysteresis)
+Admittance target: 좌우 각각 10 N 유지
+Admittance displacement limit: 30 mm에서 오른팔 약 6.5 N으로 포화되어 40 mm로 확대
+WAITING behavior: 첫 lift trajectory row 고정, y 힘 제어만 계속 실행
+Acquire behavior: 현재 wrist yaw/pitch를 ±0.35 rad로 clamp해 aligned_wrist에 저장 후 진행
+Loss behavior: 현재 trajectory row와 양손 z를 저장하고 상승 정지
+Recovery behavior: 좌우 7.5 N을 다시 0.15 s 유지하면 같은 row부터 재개
+GUI automatic-pipeline results:
+- first run: L=8.00 N, R=7.66 N에서 READY
+- 0.064 s 뒤 L=5.80 N으로 감소하자 row 11782에서 PAUSED
+- 회복 시험에서도 L=7.53 N, R=7.79 N에서 재개 후 손실 시 다시 PAUSED
+- 최종 z-hold 보강 시험: PAUSED 동안 left wrist IK frame z=1.304 m로 5 s간 동일
+- 한 손이 7.5 N 미만인 동안 WAITING 유지 확인
+- Gazebo GUI에서 게이트 해제 전 상승하지 않는 동작 확인
+Test limitation:
+- 현재 환경에 aruco_ros/single 실행 파일이 없어 /aruco_ros/pose에 실제 marker world pose를
+  20 Hz로 발행해 vision 입력만 대체함. Head scan 이후 mode-3 팔/힘/게이트 파이프라인은 동일하게 검증.
+```
 
 ---
 

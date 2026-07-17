@@ -224,6 +224,7 @@ int main(int argc, char **argv)
     ros::Publisher wrist_pitch_target_right_pub = nh.advertise<std_msgs::Float64>("/dual_arm/wrist_pitch_target_right", 10);
     ros::Publisher admittance_offset_left_pub = nh.advertise<std_msgs::Float64>("/dual_arm/admittance_offset_left", 10);
     ros::Publisher admittance_offset_right_pub = nh.advertise<std_msgs::Float64>("/dual_arm/admittance_offset_right", 10);
+    ros::Publisher grasp_gate_state_pub = nh.advertise<std_msgs::Int32>("/dual_arm/grasp_gate_state", 10);
     int prev_task_phase = task_phase;   // 값이 바뀔 때만 발행 (edge-trigger)
 
     // ArUco pose(카메라 프레임) -> world 프레임 변환용
@@ -668,6 +669,8 @@ int main(int argc, char **argv)
             if (new_trajectory_built) {
                 traj_cnt = 0;
                 traj_done_published = false;   // 새 궤적 시작 -> 완료 알림 다시 대기
+                grasp_gate_state = GRASP_WAITING;
+                grasp_force_stable_ticks = 0;
             }
             callback = false;
         }
@@ -676,6 +679,7 @@ int main(int argc, char **argv)
             // (mode 0/1/2는 전 구간 PHASE_APPROACH로 태깅되어 있어 아래 어드미턴스 분기가 절대 안 켜짐)
             int phase_this_tick = (traj_cnt < dual_arm_phase_trajectory.size())
                                        ? dual_arm_phase_trajectory(traj_cnt) : task_phase;
+            bool advance_trajectory = true;
 
             if (phase_this_tick == PHASE_GRASP_TO_PLACE) {
                 // ===== 어드미턴스 제어 (파지~내려놓기 구간): x,y 위치추종 + z 힘추종 =====
@@ -695,6 +699,15 @@ int main(int argc, char **argv)
                 Vector3d xR_d_dot(dual_arm_cart_target_vel_trajectory(traj_cnt,3), dual_arm_cart_target_vel_trajectory(traj_cnt,4), dual_arm_cart_target_vel_trajectory(traj_cnt,5));
                 Vector3d xL_d_ddot(dual_arm_cart_target_acc_trajectory(traj_cnt,0), dual_arm_cart_target_acc_trajectory(traj_cnt,1), dual_arm_cart_target_acc_trajectory(traj_cnt,2));
                 Vector3d xR_d_ddot(dual_arm_cart_target_acc_trajectory(traj_cnt,3), dual_arm_cart_target_acc_trajectory(traj_cnt,4), dual_arm_cart_target_acc_trajectory(traj_cnt,5));
+
+                // A force-loss pause holds the exact height captured at the loss event,
+                // rather than continuing to converge toward the already queued lift row.
+                if (grasp_gate_state == GRASP_PAUSED) {
+                    xL_d(2) = grasp_pause_z_left;
+                    xR_d(2) = grasp_pause_z_right;
+                    xL_d_dot(2) = xR_d_dot(2) = 0.0;
+                    xL_d_ddot(2) = xR_d_ddot(2) = 0.0;
+                }
 
                 // PHASE_GRASP_TO_PLACE 진입 첫 tick: 불연속 방지를 위해 실제 현재 상태로 초기화.
                 // y(스퀴즈)는 y_d(t)(이송 기준 경로) 대비 현재 오프셋을 deltaY 시작값으로 잡는다.
@@ -719,6 +732,14 @@ int main(int argc, char **argv)
                 right_ft_force_before = right_ft_force_lpf;
                 Vector3d F_ext_L = RL_actual * left_ft_force_lpf;
                 Vector3d F_ext_R = RR_actual * right_ft_force_lpf;
+
+                // Common squeeze axis: right grip -> left grip.  Both projected forces are
+                // positive in compression, independent of the opposing sensor-frame signs.
+                Vector3d squeeze_axis = data.oMf[l_grip].translation() - data.oMf[r_grip].translation();
+                if (squeeze_axis.norm() > 1e-9) squeeze_axis.normalize();
+                else squeeze_axis = Vector3d::UnitY();
+                const double gate_force_left = F_ext_L.dot(squeeze_axis);
+                const double gate_force_right = F_ext_R.dot(-squeeze_axis);
 
                 // x,z: 위치추종 admittance (우항 0) / y(스퀴즈 방향): 힘추종 admittance (K_y=0, 목표힘 ADMITTANCE_FD_Y_*)
                 // 이 로봇은 objL/objR이 obj ± (0,grasp_offset,0)로 world Y축 양쪽에서 마주보고 조이는
@@ -772,6 +793,52 @@ int main(int argc, char **argv)
 
                 q_cmd_prev     = q_cmd;
                 q_cmd_dot_prev = q_cmd_dot;
+
+                // Mission 7 grasp gate.  Keep replay parked on the first lift sample while
+                // admittance continues squeezing.  Once bilateral force is stable, save the
+                // current passive wrist alignment as part of grasp acquisition.  Afterwards,
+                // either hand losing force freezes the current Cartesian sample immediately;
+                // 0.15 s of recovered bilateral force resumes it.
+                const bool force_on = gate_force_left >= GRASP_FORCE_ON && gate_force_right >= GRASP_FORCE_ON;
+                const bool force_lost = gate_force_left < GRASP_FORCE_OFF || gate_force_right < GRASP_FORCE_OFF;
+                if (grasp_gate_state == GRASP_READY && force_lost) {
+                    grasp_gate_state = GRASP_PAUSED;
+                    grasp_force_stable_ticks = 0;
+                    grasp_pause_z_left = xL_actual(2);
+                    grasp_pause_z_right = xR_actual(2);
+                    xL_cmd(2) = grasp_pause_z_left;
+                    xR_cmd(2) = grasp_pause_z_right;
+                    xL_cmd_dot(2) = xR_cmd_dot(2) = 0.0;
+                    ROS_WARN("Grasp force lost (L=%.2f N, R=%.2f N): lift paused at trajectory row %d.",
+                             gate_force_left, gate_force_right, traj_cnt);
+                }
+
+                if (grasp_gate_state != GRASP_READY) {
+                    advance_trajectory = false;
+                    if (force_on) {
+                        if (grasp_force_stable_ticks < GRASP_FORCE_STABLE_TICKS)
+                            ++grasp_force_stable_ticks;
+                    } else {
+                        grasp_force_stable_ticks = 0;
+                    }
+
+                    if (grasp_force_stable_ticks >= GRASP_FORCE_STABLE_TICKS) {
+                        if (grasp_gate_state == GRASP_WAITING) {
+                            aligned_wrist << dual_arm_jointp[7], dual_arm_jointp[8],
+                                             dual_arm_jointp[13], dual_arm_jointp[14];
+                            for (int k = 0; k < 4; ++k)
+                                aligned_wrist(k) = std::min(std::max(aligned_wrist(k), -WRIST_ABS_LIMIT),
+                                                            WRIST_ABS_LIMIT);
+                            wrist_compliance_state = WRIST_ALIGNED;
+                            wrist_settle_ticks = GRASP_FORCE_STABLE_TICKS;
+                        }
+                        grasp_gate_state = GRASP_READY;
+                        advance_trajectory = true;
+                        ROS_INFO("Grasp gate ready (L=%.2f N, R=%.2f N, wrist=%d).",
+                                 gate_force_left, gate_force_right,
+                                 static_cast<int>(wrist_compliance_state));
+                    }
+                }
             }
             else {
                 admittance_initialized = false;  // GRASP_TO_PLACE 밖 -> 다음 진입에 대비해 리셋
@@ -790,7 +857,7 @@ int main(int argc, char **argv)
             }
 
             task_phase = phase_this_tick;
-            traj_cnt++;
+            if (advance_trajectory) ++traj_cnt;
         }
         else {
             // 마지막 타겟 자세 유지
@@ -936,6 +1003,9 @@ int main(int argc, char **argv)
         publish_scalar(wrist_pitch_target_right_pub, dual_arm_targetp[14]);
         publish_scalar(admittance_offset_left_pub, deltaYL);
         publish_scalar(admittance_offset_right_pub, deltaYR);
+        std_msgs::Int32 grasp_gate_message;
+        grasp_gate_message.data = static_cast<int>(grasp_gate_state);
+        grasp_gate_state_pub.publish(grasp_gate_message);
 
         for (int i = 0; i < DoF; ++i) {
             dual_arm_targetp_vec(i) = dual_arm_targetp[i];

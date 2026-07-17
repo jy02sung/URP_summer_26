@@ -149,6 +149,15 @@ const double WRIST_ABS_LIMIT = 0.35;        // 정상 운전 절대 범위 [rad]
 const double WRIST_RESTORE_START = 0.30;    // 관성 오버슈트를 고려한 복원 시작점 [rad]
 const double WRIST_ALIGNED_WINDOW = 0.12;   // 정렬 후 저장 각도 주변 허용 범위 [rad]
 
+enum GraspGateState { GRASP_WAITING = 0, GRASP_READY = 1, GRASP_PAUSED = 2 };
+GraspGateState grasp_gate_state = GRASP_WAITING;
+int grasp_force_stable_ticks = 0;
+double grasp_pause_z_left = 0.0;
+double grasp_pause_z_right = 0.0;
+const double GRASP_FORCE_ON = 7.5;          // 양손 파지 인정 threshold [N]
+const double GRASP_FORCE_OFF = 6.0;         // 힘 손실 정지 threshold (채터링 방지 hysteresis) [N]
+const int GRASP_FORCE_STABLE_TICKS = 150;   // 0.15 s @ 1000 Hz
+
 // F/T 로우패스 필터 상태 (어드미턴스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp 어드미턴스 블록에서 갱신)
 Vector3d left_ft_force_lpf     = Vector3d::Zero();
 Vector3d right_ft_force_lpf    = Vector3d::Zero();
@@ -196,9 +205,10 @@ bool admittance_initialized = false;
 double deltaYL = 0.0, deltaYR = 0.0;   // y_cmd의 y_d(t) 대비 순응 변위 (PHASE_GRASP_TO_PLACE 진입 시 현재 오프셋으로 초기화)
 // 2026-07-13 2차 검증(deltaY 도입 후): 물체는 실제로 옮겨지기 시작했지만 fy가 목표(±10N) 근처에
 // 못 미친 채(수~기N대) deltaY가 ±15mm에서 막혀 스퀴즈력 부족 -> 이송 중 관성부하를 못 버티고
-// 슬립/낙하. 15mm는 접촉면을 충분히 눌러 10N을 낼 만큼 깊지 않았던 것으로 판단, 30mm로 확대.
+// 슬립/낙하. 15mm는 접촉면을 충분히 눌러 10N을 낼 만큼 깊지 않았던 것으로 판단해 30mm로 확대했고,
+// 15cm box Mission 7에서는 오른팔이 30mm에서 약 6.5N으로 포화되어 gate 확보를 위해 40mm로 확대.
 // 속도 리밋(0.03m/s)은 그대로 유지 - 발산 방지는 변위가 아니라 속도 쪽이 핵심이었음(1차 검증).
-const double Y_CMD_MAX_DISP = 0.03;   // y_d(t) 기준 deltaY 최대 변위 [m]
+const double Y_CMD_MAX_DISP = 0.04;   // 15 cm box 실측: 우측 30mm에서 6.5N 포화 -> 7.5N gate 확보를 위해 40mm
 const double Y_CMD_VEL_LIMIT = 0.03;  // deltaY 최대 속도 [m/s] (기존 APPROACH_CONTACT_V_DES와 동일한 완만한 접촉 속도)
 
 // 매 tick IK 웜스타트 + 관절 속도/가속도 후진차분용 (온라인 계산이라 중심차분 대신 후진차분 사용)
