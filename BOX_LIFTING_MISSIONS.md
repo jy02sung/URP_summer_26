@@ -1,0 +1,393 @@
+# Box Lifting Missions
+
+## 목표
+
+`admittance-control`의 검증된 양팔 제어를 유지하면서 `jys`에서 개발한 좌우 wrist yaw를 선별 이식한다.
+최종 동작은 물체를 제자리에서 파지하고 수직으로 들어 올린 뒤, 같은 위치에 다시 내려놓는 것이다.
+
+```text
+SCAN → APPROACH → WRIST_ALIGN → SQUEEZE → LIFT → HOLD → LOWER → RELEASE → RETURN
+```
+
+## 작업 원칙
+
+- 작업 저장소: `/home/jys/catkin_ws_jmp/src/urp_summer_26`
+- 작업 브랜치: `box-lifting`
+- donor 저장소: `/home/jys/catkin_ws`의 `jys` 브랜치
+- 기반 제어는 `jmp`의 Cartesian admittance를 유지한다.
+- `jys` 전체 제어 코드를 한꺼번에 복사하지 않는다.
+- 각 미션은 별도 커밋으로 남긴다.
+- 각 미션 통과 전에는 다음 미션을 시작하지 않는다.
+- 코드 변경 후 workspace root에서 `catkin_make -DCMAKE_BUILD_TYPE=Release`를 실행한다.
+- ROS 시험 전 `source devel/setup.bash`를 실행한다.
+- Gazebo 시험 전 기존 ROS/Gazebo 프로세스를 확인한다.
+- GUI에서 진동, 자세 드리프트, 비의도 관절 운동을 확인한다.
+- 시험 후 Codex가 실행한 프로세스만 종료한다.
+
+## 완료 기준
+
+- [ ] 양쪽 wrist yaw가 포함된 13DoF 모델이 안정적으로 스폰된다.
+- [ ] waist와 head를 사용하지 않는 arm-only IK가 유지된다.
+- [ ] 손목이 접촉면에 제한적으로 정렬되고 관절 끝으로 열리지 않는다.
+- [ ] 양손이 목표 압착력을 안정적으로 유지한다.
+- [ ] 물체가 제자리에서 수직 상승한다.
+- [ ] 물체를 일정 시간 유지한다.
+- [ ] 물체가 원래 위치에 다시 놓인다.
+- [ ] 손을 안전하게 놓고 팔이 복귀한다.
+
+---
+
+## Mission 0 — 기준 동작 고정
+
+### 목표
+
+수정 전 `box-lifting` 기준 동작을 재현하고 비교용 데이터를 남긴다.
+
+### 작업
+
+- 현재 11DoF 모델을 Release로 빌드한다.
+- Gazebo GUI와 ArUco detector를 실행한다.
+- README의 vision 명령으로 기존 pick-and-place를 한 번 실행한다.
+- 물체 시작 위치, 검출 위치, 최종 위치를 기록한다.
+- 양팔 joint state와 F/T sensor 토픽이 정상인지 확인한다.
+
+### 통과 조건
+
+- [x] 빌드 성공
+- [x] 11개 controller 로드 성공
+- [x] `/dual_arm/joint_states`에 NaN 없음
+- [x] 카메라 약 20 Hz 수신
+- [x] ArUco marker 검출 성공
+- [x] 양팔이 물체를 실제로 이동시킴
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+Base commit: 32bf5a6
+Object start pose:  [0.4500, -0.1500, 1.2000], yaw 0 deg
+Detected box center: [0.4690, -0.1720, 1.1910]
+Transport target:   [0.4500,  0.1700, 1.2000]
+Object final pose:  [0.4404,  0.1548, 1.2000], yaw about 4.42 deg
+Camera rate: about 20.1 Hz
+Controllers: joint_state_controller + 11 effort controllers, all running
+Known issues:
+- Detected center differs from initial truth by about [+1.9, -2.2, -0.9] cm.
+- Final target error is about [-1.0, -1.5, 0.0] cm with about 4.42 deg yaw.
+- TrajectoryDone was not published during an additional 70 s observation.
+- Arms remained in a non-zero holding pose after the object stopped.
+- The branch does not contain the aruco_ros executable; the jys build was used temporarily.
+- Deleting a nonexistent place_indicator emits a harmless Gazebo error.
+```
+
+---
+
+## Mission 1 — Wrist URDF 이식
+
+### 목표
+
+현재 손바닥 형상을 유지하면서 좌우 wrist yaw link/joint만 추가한다.
+
+### 작업
+
+- `jys`의 wrist yaw link, joint, inertia, damping, limit를 참고한다.
+- `L_EE_joint`와 `R_EE_joint`를 각 wrist link 아래로 재배치한다.
+- F/T sensor joint 구조를 유지한다.
+- 새 손바닥 패드 중심에 맞춰 contact/IK frame 위치를 정의한다.
+- transmission과 Gazebo joint 설정을 추가한다.
+- xacro에서 URDF를 다시 생성하고 parser로 검사한다.
+
+### 주의
+
+- `jys`의 손바닥 collision과 grip pad 형상은 복사하지 않는다.
+- wrist pitch는 추가하지 않는다.
+- URDF 물리 한계 `±0.9 rad`는 정상 운전 범위가 아니다.
+
+### 통과 조건
+
+- [ ] xacro 변환 성공
+- [ ] URDF parser 성공
+- [ ] 좌우 wrist yaw joint 존재
+- [ ] EE와 F/T sensor가 wrist 아래에 연결됨
+- [ ] 기존 손바닥 visual/collision 유지
+
+---
+
+## Mission 2 — Spawn-only 물리 안정성
+
+### 목표
+
+제어 노드 없이 wrist가 추가된 모델 자체의 물리 안정성을 검증한다.
+
+### 작업
+
+- `dual_arm_main` 없이 스폰하는 진단 launch를 만든다.
+- 가능하면 physics paused 상태에서 먼저 스폰한다.
+- unpause 후 최초로 움직이는 joint/link를 확인한다.
+- `/gazebo/model_states`와 `/gazebo/get_joint_properties`를 확인한다.
+
+### 통과 조건
+
+- [ ] model pose/twist에 NaN 없음
+- [ ] wrist가 joint limit로 튀지 않음
+- [ ] elbow와 shoulder가 비정상적으로 이동하지 않음
+- [ ] 모델이 10초 이상 안정적으로 유지됨
+
+### 실패 시
+
+제어 코드를 수정하지 말고 wrist inertia, collision, fixed-joint chain부터 조사한다.
+
+---
+
+## Mission 3 — 13DoF controller와 상태 매핑
+
+### 목표
+
+11DoF 제어 경로를 13DoF로 확장한다.
+
+### Pinocchio 순서
+
+```text
+0  Waist
+1  Head yaw
+2  Head pitch
+3  L shoulder pitch
+4  L shoulder roll
+5  L shoulder yaw
+6  L elbow
+7  L wrist yaw
+8  R shoulder pitch
+9  R shoulder roll
+10 R shoulder yaw
+11 R elbow
+12 R wrist yaw
+```
+
+### 작업
+
+- `DoF=13`, `ARM_DOF=5`로 확장한다.
+- controller YAML과 launch에 wrist controller 두 개를 추가한다.
+- effort publisher 두 개를 추가한다.
+- joint state는 이름 기반 매핑으로 읽는다.
+- ROS controller 순서와 Pinocchio 순서를 명시적으로 변환한다.
+
+### 통과 조건
+
+- [ ] 13개 controller 로드 성공
+- [ ] `/dual_arm/joint_states`에 wrist joint 포함
+- [ ] 모든 joint 값 유한
+- [ ] waist, arms, head가 시작 자세를 유지
+- [ ] wrist 0 rad hold 성공
+
+---
+
+## Mission 4 — Arm-only IK 복구
+
+### 목표
+
+양팔 IK가 각 팔의 5개 joint만 사용하고 waist/head를 움직이지 않게 한다.
+
+### 작업
+
+- Left IK columns: `3,4,5,6,7`
+- Right IK columns: `8,9,10,11,12`
+- waist/head는 seed 값을 그대로 유지한다.
+- wrist가 추가된 새 IK frame과 contact frame을 사용한다.
+- 기존 11DoF 접근 목표를 13DoF 모델에서 다시 검증한다.
+
+### 통과 조건
+
+- [ ] head pitch 동작 중 waist/arms/head yaw 고정
+- [ ] arm IK 중 waist/head 고정
+- [ ] 양팔이 기존 standoff와 contact 목표에 도달
+- [ ] wrist가 IK 계산 때문에 joint limit로 이동하지 않음
+
+---
+
+## Mission 5 — Wrist 제한 순응
+
+### 목표
+
+손목이 접촉면에 맞춰 회전하되 바깥으로 계속 열리지 않게 한다.
+
+### 제어 정책
+
+```text
+비접촉/접근: 0 rad 중심 유지
+접촉 정렬: 절대 범위 ±0.30~0.35 rad에서만 순응
+정렬 완료: 현재 각도를 aligned_wrist로 저장
+리프트/하강: aligned_wrist ±0.10~0.15 rad에서만 순응
+범위 초과: 경계 안으로 복원 토크 적용
+```
+
+### 작업
+
+- 실제 wrist angle을 매 tick 무제한 목표로 복사하지 않는다.
+- soft limit 목표와 직접 복원 토크를 함께 사용한다.
+- 접촉력이 양쪽 모두 일정 값 이상일 때만 정렬 판정을 시작한다.
+- F/T torque가 일정 시간 낮으면 정렬 완료로 판정한다.
+
+### 통과 조건
+
+- [ ] wrist가 `±0.35 rad` 정상 범위를 크게 벗어나지 않음
+- [ ] wrist가 URDF limit `±0.9 rad`에 닿지 않음
+- [ ] 양쪽 패드가 물체 측면과 접촉
+- [ ] 손목 정렬 후 각도가 안정적으로 유지됨
+
+---
+
+## Mission 6 — 힘 및 손목 진단 토픽
+
+### 목표
+
+rqt에서 파지 상태를 즉시 판단할 수 있게 한다.
+
+### 추가 토픽
+
+```text
+/dual_arm/grasp_force_left
+/dual_arm/grasp_force_right
+/dual_arm/grasp_force_target
+/dual_arm/wrist_yaw_left
+/dual_arm/wrist_yaw_right
+/dual_arm/wrist_yaw_target_left
+/dual_arm/wrist_yaw_target_right
+/dual_arm/admittance_offset_left
+/dual_arm/admittance_offset_right
+```
+
+### 힘 계산
+
+양손 중심을 잇는 공통 squeeze axis에 world-frame F/T force를 투영한다.
+
+### 통과 조건
+
+- [ ] 모든 진단 토픽이 연속 발행됨
+- [ ] rqt_plot에 좌우 힘과 목표 힘 표시
+- [ ] rqt_plot에 좌우 wrist 실제/목표 각도 표시
+- [ ] 카메라와 힘 그래프를 동시에 관찰 가능
+
+---
+
+## Mission 7 — 제자리 파지 게이트
+
+### 목표
+
+양손 접촉이 안정되기 전에는 리프트가 시작되지 않게 한다.
+
+### 초기 기준값
+
+```text
+목표 압착력: 좌우 각각 10 N
+파지 인정: 좌우 각각 7.5 N 이상
+유지 시간: 0.1~0.2 s
+정렬 시작 접촉력: 좌우 각각 2 N 이상
+```
+
+### 통과 조건
+
+- [ ] 한쪽만 접촉하면 상승하지 않음
+- [ ] 양쪽 힘이 기준을 유지하면 파지 완료
+- [ ] 파지 완료 시 wrist 정렬각 저장
+- [ ] 힘 손실 시 현재 높이에서 상승 정지
+
+---
+
+## Mission 8 — 수직 LIFT와 HOLD
+
+### 목표
+
+물체의 x/y를 유지하면서 z 방향으로만 들어 올린다.
+
+### 작업
+
+- 기존 수평 transport segment를 사용하지 않는다.
+- 초기 상승 높이는 `0.05~0.08 m`로 제한한다.
+- 양손 target의 x/y는 파지 완료 위치로 고정한다.
+- z만 부드러운 trajectory로 증가시킨다.
+- 최고점에서 1~2초 유지한다.
+
+### 통과 조건
+
+- [ ] 물체가 받침대에서 분리됨
+- [ ] 상승 중 x/y 이동이 허용 오차 내
+- [ ] 물체 roll/pitch/yaw가 과도하게 변하지 않음
+- [ ] HOLD 동안 높이와 양손 힘 유지
+- [ ] waist/head가 움직이지 않음
+
+---
+
+## Mission 9 — LOWER와 RELEASE
+
+### 목표
+
+물체를 원래 위치로 내려놓고 안전하게 놓는다.
+
+### 작업
+
+- lift trajectory를 역방향으로 실행한다.
+- 원래 검출 높이까지 수직 하강한다.
+- 하강 완료 전까지 압착력을 유지한다.
+- 목표 힘을 약 1초 동안 10 N에서 0 N으로 감소시킨다.
+- 양손을 바깥쪽으로 후퇴시킨다.
+- wrist를 0 rad로 복귀시킨다.
+
+### 통과 조건
+
+- [ ] 물체가 원래 받침대에 놓임
+- [ ] release 전에 물체가 낙하하지 않음
+- [ ] release 후 물체 pose가 안정됨
+- [ ] 양팔과 wrist가 안전 자세로 복귀
+
+---
+
+## Mission 10 — 반복 시험 및 정리
+
+### 목표
+
+한 번의 성공이 아니라 반복 가능한 box lifting을 완성한다.
+
+### 작업
+
+- 최소 5회 연속 시험한다.
+- 각 시험의 검출 pose, 최대 높이, 최소 파지력, 최종 pose를 기록한다.
+- launch 하나로 Gazebo와 ArUco detector가 함께 시작되게 한다.
+- rqt 설정 또는 진단 실행 방법을 README에 기록한다.
+- 임시 진단 코드와 사용하지 않는 place/transport 로직을 정리한다.
+
+### 최종 통과 조건
+
+- [ ] 5회 중 5회 파지 성공
+- [ ] 5회 중 5회 목표 높이 도달
+- [ ] 5회 중 5회 원래 위치에 내려놓기 성공
+- [ ] wrist limit 접촉 0회
+- [ ] NaN 및 controller failure 0회
+- [ ] 실행 및 검증 절차 문서화 완료
+
+---
+
+## 작업 로그
+
+각 미션 완료 후 아래 형식으로 누적한다.
+
+```text
+## YYYY-MM-DD — Mission N
+
+- Commit:
+- 변경 파일:
+- 빌드 결과:
+- Gazebo 결과:
+- 측정값:
+- 남은 문제:
+- 다음 미션 시작 조건:
+```
+
+## 2026-07-17 — Mission 0
+
+- Commit: Mission 0 documentation commit (this commit)
+- 변경 파일: `BOX_LIFTING_MISSIONS.md`
+- 빌드 결과: Release build 성공
+- Gazebo 결과: 11DoF 안정, 실제 물체가 목표 근처로 이동 후 정지
+- 측정값: 시작 `[0.4500,-0.1500,1.2000]`, 최종 `[0.4404,0.1548,1.2000]`
+- 남은 문제: ArUco 중심 오차, 약 4.42 deg 물체 회전, TrajectoryDone 미발행
+- 다음 미션 시작 조건: Mission 0 결과 사용자 확인 후 Mission 1 wrist URDF 이식 시작
