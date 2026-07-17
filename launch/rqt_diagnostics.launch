@@ -1,0 +1,17 @@
+<launch>
+  <!-- Mission 6: camera and grasp/control signals in separate rqt windows. -->
+  <node pkg="rqt_image_view" type="rqt_image_view" name="grasp_camera_view"
+        args="/dual_arm/head_camera/rgb/image_raw" output="screen" />
+
+  <node pkg="rqt_plot" type="rqt_plot" name="grasp_force_plot"
+        args="/dual_arm/grasp_force_left/data,/dual_arm/grasp_force_right/data,/dual_arm/grasp_force_target/data"
+        output="screen" />
+
+  <node pkg="rqt_plot" type="rqt_plot" name="wrist_yaw_plot"
+        args="/dual_arm/wrist_yaw_left/data,/dual_arm/wrist_yaw_right/data,/dual_arm/wrist_yaw_target_left/data,/dual_arm/wrist_yaw_target_right/data"
+        output="screen" />
+
+  <node pkg="rqt_plot" type="rqt_plot" name="wrist_pitch_plot"
+        args="/dual_arm/wrist_pitch_left/data,/dual_arm/wrist_pitch_right/data,/dual_arm/wrist_pitch_target_left/data,/dual_arm/wrist_pitch_target_right/data"
+        output="screen" />
+</launch>

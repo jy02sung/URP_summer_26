@@ -428,6 +428,10 @@ rqt에서 파지 상태를 즉시 판단할 수 있게 한다.
 /dual_arm/wrist_yaw_right
 /dual_arm/wrist_yaw_target_left
 /dual_arm/wrist_yaw_target_right
+/dual_arm/wrist_pitch_left
+/dual_arm/wrist_pitch_right
+/dual_arm/wrist_pitch_target_left
+/dual_arm/wrist_pitch_target_right
 /dual_arm/admittance_offset_left
 /dual_arm/admittance_offset_right
 ```
@@ -438,10 +442,33 @@ rqt에서 파지 상태를 즉시 판단할 수 있게 한다.
 
 ### 통과 조건
 
-- [ ] 모든 진단 토픽이 연속 발행됨
-- [ ] rqt_plot에 좌우 힘과 목표 힘 표시
-- [ ] rqt_plot에 좌우 wrist 실제/목표 각도 표시
-- [ ] 카메라와 힘 그래프를 동시에 관찰 가능
+- [x] 모든 진단 토픽이 연속 발행됨
+- [x] rqt_plot에 좌우 힘과 목표 힘 표시
+- [x] rqt_plot에 좌우 wrist 실제/목표 각도 표시
+- [x] 카메라와 힘 그래프를 동시에 관찰 가능
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+Launch: roslaunch dual_arm rqt_diagnostics.launch
+Windows: head camera, bilateral grasp force + target, wrist yaw actual/target,
+         wrist pitch actual/target
+Diagnostic rate: scalar control topics 약 900~1000 Hz
+Camera: /dual_arm/head_camera/rgb/image_raw 약 20 Hz
+Force convention: right grip -> left grip 공통 squeeze axis에 world-frame F/T force 투영,
+                  양쪽 모두 압축 방향을 양수로 발행
+Centered-box contact result:
+- left grasp force 약 4.57 N
+- right grasp force 약 4.61 N
+- target force 10.0 N
+- wrist state ALIGNED(2)
+- wrist yaw/pitch가 정상 제한 범위 안에 유지됨
+- Gazebo model state NaN 없음
+Admittance offset note:
+- mode-2 수동 접촉 검증에서는 admittance phase가 아니므로 좌우 offset 0.0이 정상
+- 토픽 자체는 항상 연속 발행되며 Mission 7 이후 자동 파지 구간에서 변화 관찰 가능
+```
 
 ---
 

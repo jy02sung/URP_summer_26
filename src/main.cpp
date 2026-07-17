@@ -211,6 +211,19 @@ int main(int argc, char **argv)
     ros::Publisher task_phase_pub = nh.advertise<std_msgs::Int32>("/dual_arm/TaskPhase", 10);
     ros::Publisher dual_armtraj_done_pub = nh.advertise<std_msgs::Bool>("/dual_arm/TrajectoryDone", 10);
     ros::Publisher wrist_state_pub = nh.advertise<std_msgs::Float64MultiArray>("/dual_arm/wrist_compliance", 10);
+    ros::Publisher grasp_force_left_pub = nh.advertise<std_msgs::Float64>("/dual_arm/grasp_force_left", 10);
+    ros::Publisher grasp_force_right_pub = nh.advertise<std_msgs::Float64>("/dual_arm/grasp_force_right", 10);
+    ros::Publisher grasp_force_target_pub = nh.advertise<std_msgs::Float64>("/dual_arm/grasp_force_target", 10);
+    ros::Publisher wrist_yaw_left_pub = nh.advertise<std_msgs::Float64>("/dual_arm/wrist_yaw_left", 10);
+    ros::Publisher wrist_yaw_right_pub = nh.advertise<std_msgs::Float64>("/dual_arm/wrist_yaw_right", 10);
+    ros::Publisher wrist_yaw_target_left_pub = nh.advertise<std_msgs::Float64>("/dual_arm/wrist_yaw_target_left", 10);
+    ros::Publisher wrist_yaw_target_right_pub = nh.advertise<std_msgs::Float64>("/dual_arm/wrist_yaw_target_right", 10);
+    ros::Publisher wrist_pitch_left_pub = nh.advertise<std_msgs::Float64>("/dual_arm/wrist_pitch_left", 10);
+    ros::Publisher wrist_pitch_right_pub = nh.advertise<std_msgs::Float64>("/dual_arm/wrist_pitch_right", 10);
+    ros::Publisher wrist_pitch_target_left_pub = nh.advertise<std_msgs::Float64>("/dual_arm/wrist_pitch_target_left", 10);
+    ros::Publisher wrist_pitch_target_right_pub = nh.advertise<std_msgs::Float64>("/dual_arm/wrist_pitch_target_right", 10);
+    ros::Publisher admittance_offset_left_pub = nh.advertise<std_msgs::Float64>("/dual_arm/admittance_offset_left", 10);
+    ros::Publisher admittance_offset_right_pub = nh.advertise<std_msgs::Float64>("/dual_arm/admittance_offset_right", 10);
     int prev_task_phase = task_phase;   // 값이 바뀔 때만 발행 (edge-trigger)
 
     // ArUco pose(카메라 프레임) -> world 프레임 변환용
@@ -271,6 +284,8 @@ int main(int argc, char **argv)
     // 실제 접촉면 중심은 별도의 L/R_grip_frame으로 유지한다.
     pinocchio::FrameIndex l_EE = model.getFrameId("L_wrist_ik_frame");
     pinocchio::FrameIndex r_EE = model.getFrameId("R_wrist_ik_frame");
+    pinocchio::FrameIndex l_grip = model.getFrameId("L_grip_frame");
+    pinocchio::FrameIndex r_grip = model.getFrameId("R_grip_frame");
 
     // ===== Head 자동 스캔: 다음 웨이포인트로 Head만 이동시키는 단일 세그먼트를 만들어 재생 준비 =====
     // 다른 관절(waist/양팔)은 scan_q에 저장된 직전 값을 그대로 유지한다.
@@ -889,6 +904,38 @@ int main(int argc, char **argv)
                            dual_arm_jointp[13], dual_arm_jointp[14],
                            left_ft_force.norm(), right_ft_force.norm()};
         wrist_state_pub.publish(wrist_diag);
+
+        // Mission 6 diagnostics.  Express both sensor forces along one common squeeze
+        // axis (right palm -> left palm), so positive values mean compression on either
+        // side even though the two local sensor axes point in opposite directions.
+        pinocchio::forwardKinematics(model, data, dual_arm_jointp_vec);
+        pinocchio::updateFramePlacements(model, data);
+        Vector3d squeeze_axis = data.oMf[l_grip].translation() - data.oMf[r_grip].translation();
+        if (squeeze_axis.norm() > 1e-9) squeeze_axis.normalize();
+        else squeeze_axis = Vector3d::UnitY();
+        const Vector3d left_force_world = data.oMf[l_EE].rotation() * left_ft_force;
+        const Vector3d right_force_world = data.oMf[r_EE].rotation() * right_ft_force;
+        const double grasp_force_left = left_force_world.dot(squeeze_axis);
+        const double grasp_force_right = right_force_world.dot(-squeeze_axis);
+
+        auto publish_scalar = [](ros::Publisher& publisher, double value) {
+            std_msgs::Float64 message;
+            message.data = value;
+            publisher.publish(message);
+        };
+        publish_scalar(grasp_force_left_pub, grasp_force_left);
+        publish_scalar(grasp_force_right_pub, grasp_force_right);
+        publish_scalar(grasp_force_target_pub, std::abs(ADMITTANCE_FD_Y_LEFT));
+        publish_scalar(wrist_yaw_left_pub, dual_arm_jointp[7]);
+        publish_scalar(wrist_yaw_right_pub, dual_arm_jointp[13]);
+        publish_scalar(wrist_yaw_target_left_pub, dual_arm_targetp[7]);
+        publish_scalar(wrist_yaw_target_right_pub, dual_arm_targetp[13]);
+        publish_scalar(wrist_pitch_left_pub, dual_arm_jointp[8]);
+        publish_scalar(wrist_pitch_right_pub, dual_arm_jointp[14]);
+        publish_scalar(wrist_pitch_target_left_pub, dual_arm_targetp[8]);
+        publish_scalar(wrist_pitch_target_right_pub, dual_arm_targetp[14]);
+        publish_scalar(admittance_offset_left_pub, deltaYL);
+        publish_scalar(admittance_offset_right_pub, deltaYR);
 
         for (int i = 0; i < DoF; ++i) {
             dual_arm_targetp_vec(i) = dual_arm_targetp[i];
