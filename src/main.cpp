@@ -17,12 +17,12 @@ const string PLACE_INDICATOR_SDF = R"(
     <static>true</static>
     <link name="link">
       <collision name="pedestal_collision">
-        <pose>0 0 -0.10 0 0 0</pose>
-        <geometry><box><size>0.12 0.12 0.10</size></box></geometry>
+        <pose>0 0 -0.125 0 0 0</pose>
+        <geometry><box><size>0.17 0.17 0.10</size></box></geometry>
       </collision>
       <visual name="pedestal_visual">
-        <pose>0 0 -0.10 0 0 0</pose>
-        <geometry><box><size>0.12 0.12 0.10</size></box></geometry>
+        <pose>0 0 -0.125 0 0 0</pose>
+        <geometry><box><size>0.17 0.17 0.10</size></box></geometry>
         <material>
           <ambient>0.2 0.8 0.2 1</ambient>
           <diffuse>0.2 0.8 0.2 1</diffuse>
@@ -326,16 +326,16 @@ int main(int argc, char **argv)
         }
 
         // aruco_ros가 보고하는 pose는 "마커 패치"의 pose이지 박스 중심이 아니다.
-        // aruco_box_26/model.sdf: 마커 패치가 박스 로컬 -X면에 pose x=-0.0505로 붙어있음(박스 10cm 절반+마커두께),
+        // aruco_box_26/model.sdf: 마커 패치가 박스 로컬 -X면에 pose x=-0.0755로 붙어있음(박스 15cm 절반+마커두께),
         // 이 world의 aruco_box_26은 항상 회전 없이(rpy=0) 스폰되므로 박스 로컬 -X = world -X로 고정이다.
-        // 박스 중심 = 마커 위치 + (0.0505, 0, 0).
+        // 박스 중심 = 마커 위치 + (0.0755, 0, 0).
         // (주의: 처음에는 pose의 orientation(Z축=마커 법선)으로 회전에 무관하게 일반화해서 보정하려 했으나,
         //  이 시야각(오블리크)에서는 ArUco의 orientation 추정 자체가 부정확해서 오히려 오차가 커짐을 실측으로
         //  확인함. position(위치) 추정은 안정적이므로, 이 데모 world처럼 물체가 항상 축정렬로 스폰되는
         //  경우엔 world-frame 고정 오프셋이 orientation 기반 보정보다 더 안정적이다.)
-        // (이 보정 없이 마커 위치를 그대로 물체 중심으로 쓰면 grasp_offset=4.5cm 스퀴즈가 실제 박스 표면을
+        // (이 보정 없이 마커 위치를 그대로 물체 중심으로 쓰면 grasp_offset 스퀴즈가 실제 박스 표면을
         //  몇 cm씩 빗나가 파지가 전혀 안 되는 문제가 있었음 - 실측으로 확인.)
-        const double MARKER_TO_BOX_CENTER = 0.0505;
+        const double MARKER_TO_BOX_CENTER = 0.0755;
 
         Vector3d obj = Vector3d(object_world.pose.position.x,
                                  object_world.pose.position.y,
@@ -344,8 +344,9 @@ int main(int argc, char **argv)
         Vector3d transport_pt(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
 
         // 양팔 동시 파지 간격(물체를 y축 양쪽에서 감싸는 형태)
-        // aruco_box_26 기준: 10cm 정육면체, y방향 half-width = 0.05m
-        const double grasp_offset = 0.040;  // 물체/이송목표 좌우 간격 (표면 안쪽 10mm 압착 - 기존 5mm는 정적 유지 여유만 있고
+        // aruco_box_26 기준: 15cm 정육면체, y방향 half-width = 0.075m
+        // grasp_offset = half-width - 침투깊이(10mm, 기존 튜닝값 그대로 유지) = 0.075 - 0.010 = 0.065
+        const double grasp_offset = 0.065;  // 물체/이송목표 좌우 간격 (표면 안쪽 10mm 압착 - 기존 5mm는 정적 유지 여유만 있고
                                              // 이송 중 관성부하를 버틸 마진이 없어 슬립 발생, Kd_imp 상향과 함께 조임)
 
         VectorXd base_seed(DoF);
@@ -365,10 +366,10 @@ int main(int argc, char **argv)
         // pick_pedestal(world 파일)이 파지점 바로 아래(z 1.05~1.15)에 y로 걸쳐 있어서, 시작 자세에서
         // objL/R로 곧장 3D 직선 이동하면 z가 받침대 상판보다 낮은 구간에서 x,y가 이미 받침대 영역에
         // 들어가 팔이 모서리에 부딪힌다. 그래서 접근을 2단계로 나눈다: 먼저 파지 높이(obj.z, 받침대
-        // 상판보다 5cm 위)를 유지한 채 받침대 바깥쪽으로 STANDOFF_Y만큼 더 벌어진 standoff 지점으로
+        // 상판보다 7.5cm 위)를 유지한 채 받침대 바깥쪽으로 STANDOFF_Y만큼 더 벌어진 standoff 지점으로
         // 이동하고, 그다음 그 높이를 유지한 채 y 방향으로만 직선 이동해 파지점에 들어간다 - 마지막
         // 구간은 항상 받침대보다 높은 높이에서만 움직이므로 부딪힐 수 없다.
-        const double STANDOFF_Y = 0.15;  // 받침대 y 반폭(0.06)보다 충분히 큰 여유
+        const double STANDOFF_Y = 0.15;  // 받침대 y 반폭(0.085)보다 충분히 큰 여유
         Vector3d standoffL = objL + Vector3d(0, STANDOFF_Y, 0);
         Vector3d standoffR = objR + Vector3d(0, -STANDOFF_Y, 0);
 
