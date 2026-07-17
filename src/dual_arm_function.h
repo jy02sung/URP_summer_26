@@ -77,6 +77,11 @@ double left_arm_torque[4] = {0,};
 double right_arm_jointp[4] = {0,};
 double right_arm_jointv[4] = {0,};
 double right_arm_torque[4] = {0,};
+// 손목 yaw(L_wy=DoF 7, R_wy=DoF 12) 상태. joint_states 콜백에서 갱신, FK/RNEA용 DoF 벡터에 반영.
+double left_wrist_jointp[1] = {0};
+double left_wrist_jointv[1] = {0};
+double right_wrist_jointp[1] = {0};
+double right_wrist_jointv[1] = {0};
 
 double dual_arm_jointp[DoF] = {0,};
 double dual_arm_jointv[DoF] = {0,};
@@ -136,12 +141,33 @@ int task_phase = PHASE_APPROACH;
 Vector3d left_ft_force  = Vector3d::Zero();
 Vector3d right_ft_force = Vector3d::Zero();
 
+// F/T 센서 토크 측정값 (torque.x,y,z). 손목 정렬 판정(잔여 모멘트 확인)에만 쓰이며, 어드미턴스 힘추종에는 안 씀.
+Vector3d left_ft_torque  = Vector3d::Zero();
+Vector3d right_ft_torque = Vector3d::Zero();
+
 // F/T 로우패스 필터 상태 (어드미턴스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp 어드미턴스 블록에서 갱신)
 Vector3d left_ft_force_lpf     = Vector3d::Zero();
 Vector3d right_ft_force_lpf    = Vector3d::Zero();
 Vector3d left_ft_force_before  = Vector3d::Zero();
 Vector3d right_ft_force_before = Vector3d::Zero();
 const double FT_LPF_CUTOFF_HZ  = 10.0;  // 컷오프 주파수 [Hz]
+
+// F/T 토크 로우패스 필터 상태 (force와 동일한 방식으로 노이즈 억제 후 손목 정렬 판정에 사용)
+Vector3d left_ft_torque_lpf     = Vector3d::Zero();
+Vector3d right_ft_torque_lpf    = Vector3d::Zero();
+Vector3d left_ft_torque_before  = Vector3d::Zero();
+Vector3d right_ft_torque_before = Vector3d::Zero();
+
+// 손목 면정렬(face alignment) 판정용 임계값 (jys 검증값, 이 branch와 동일한 10N 스퀴즈 목표 기준).
+// 손목 yaw는 직접 명령하지 않고 Task 2의 소프트 PD(Kp=40)가 물리적으로 정렬하며, 아래 값들은
+// "언제 다음 단계(이송)로 넘어가도 될 만큼 정렬이 안정됐는지"만 판단한다.
+const double WRIST_ALIGN_CONTACT_FORCE     = 2.0;   // [N] below this, don't treat zero torque as "aligned"
+const double WRIST_ALIGN_TORQUE_THRESHOLD  = 0.15;  // [N*m] allowed residual moment once face-aligned
+const int    WRIST_ALIGN_HOLD_TICKS        = 200;   // 0.20s @ 1kHz - must stay settled this long
+
+// 손목 정렬 상태 (접촉+저토크가 WRIST_ALIGN_HOLD_TICKS 동안 유지되면 ready로 래치)
+bool wrist_alignment_ready = false;
+int  wrist_alignment_ticks = 0;
 
 // 가상 질량-댐핑-강성 파라미터 (튜닝용). 배열 인덱스는 world frame [x,y,z]지만, 이 로봇의 실제
 // 스퀴즈(파지) 방향은 world Z(수직)가 아니라 world Y다 - objL/objR이 obj ± (0,grasp_offset,0)로
