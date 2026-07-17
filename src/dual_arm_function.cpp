@@ -225,15 +225,15 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
     VectorXd q = q_seed;
 
     // elbow-down + shoulder-roll 바깥벌림 선호 자세(q_pref). 순서는 DoF 배열과 동일:
-    // 0:Waist 1:Head_yaw 2:Head_pitch 3:L_sp 4:L_sr 5:L_sy 6:L_e 7:L_wy
-    // 8:R_sp 9:R_sr 10:R_sy 11:R_e 12:R_wy.
-    // L_wy/R_wy(7,12)는 접촉 컴플라이언스 전용 축이라 q_pref를 안 주고 아래에서 posture/Jacobian
-    // 모두 명시적으로 마스킹한다. Waist/Head는 0.0(중립) - Head는 애초 Jacobian에 관여 안 하므로
-    // 아래에서 null-space 기여분을 명시적으로 0으로 마스킹한다(관여 안 하는데도 (I-J⁺J)의 대각항이
-    // 1이라 그대로 두면 Head가 원치 않게 끌려간다).
+    // 0:Waist 1:Head_yaw 2:Head_pitch 3:L_sp 4:L_sr 5:L_sy 6:L_e 7:L_wy 8:L_wp
+    // 9:R_sp 10:R_sr 11:R_sy 12:R_e 13:R_wy 14:R_wp.
+    // L_wy/L_wp/R_wy/R_wp(7,8,13,14)는 접촉 컴플라이언스 전용 축이라 q_pref를 안 주고 아래에서
+    // posture/Jacobian 모두 명시적으로 마스킹한다. Waist/Head는 0.0(중립) - Head는 애초 Jacobian에
+    // 관여 안 하므로 아래에서 null-space 기여분을 명시적으로 0으로 마스킹한다(관여 안 하는데도
+    // (I-J⁺J)의 대각항이 1이라 그대로 두면 Head가 원치 않게 끌려간다).
     VectorXd q_pref = VectorXd::Zero(DoF);
-    q_pref(3) = 0.80;  q_pref(4) =  0.55; q_pref(5) = -0.20; q_pref(6)  = -0.45;  // L arm (7=L_wy handled below)
-    q_pref(8) = 0.80;  q_pref(9) = -0.55; q_pref(10) =  0.20; q_pref(11) = -0.45; // R arm (12=R_wy handled below)
+    q_pref(3) = 0.80;  q_pref(4) =  0.55; q_pref(5) = -0.20; q_pref(6)  = -0.45;  // L arm (7,8=L_wy/L_wp handled below)
+    q_pref(9) = 0.80;  q_pref(10) = -0.55; q_pref(11) =  0.20; q_pref(12) = -0.45; // R arm (13,14=R_wy/R_wp handled below)
 
     for (int iter = 0; iter < maxIter; ++iter)
     {
@@ -259,10 +259,12 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
         J.topRows<3>()    = JL.topRows<3>();   // 위치 3행만
         J.bottomRows<3>() = JR.topRows<3>();
 
-        // 손목 yaw(인덱스 7, 12)는 접촉 후 컴플라이언스 전용 축이다 - IK가 팔 자세
+        // 손목 yaw+pitch(인덱스 7,8, 13,14)는 접촉 후 컴플라이언스 전용 축이다 - IK가 팔 자세
         // 오차를 메우는 데 이 축을 쓰면 안 되므로 태스크 자코비안에서 완전히 제외한다.
         J.col(7).setZero();
-        J.col(12).setZero();
+        J.col(8).setZero();
+        J.col(13).setZero();
+        J.col(14).setZero();
 
         MatrixXd JJt = J * J.transpose() + (lambda*lambda) * MatrixXd::Identity(6,6);
         MatrixXd JJt_inv = JJt.ldlt().solve(MatrixXd::Identity(6,6));
@@ -280,7 +282,9 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
         postureErr(1) = 0.0;  // Head_yaw
         postureErr(2) = 0.0;  // Head_pitch
         postureErr(7)  = 0.0;  // L_wrist_yaw - no posture pull, pure contact compliance
-        postureErr(12) = 0.0;  // R_wrist_yaw
+        postureErr(8)  = 0.0;  // L_wrist_pitch
+        postureErr(13) = 0.0;  // R_wrist_yaw
+        postureErr(14) = 0.0;  // R_wrist_pitch
         dq += N * postureErr;
 
         q += step * dq;
