@@ -105,11 +105,26 @@ Known issues:
 
 ### 통과 조건
 
-- [ ] xacro 변환 성공
-- [ ] URDF parser 성공
-- [ ] 좌우 wrist yaw joint 존재
-- [ ] EE와 F/T sensor가 wrist 아래에 연결됨
-- [ ] 기존 손바닥 visual/collision 유지
+- [x] xacro 변환 성공
+- [x] URDF parser 성공
+- [x] 좌우 wrist yaw joint 존재
+- [x] EE와 F/T sensor가 wrist 아래에 연결됨
+- [x] 기존 손바닥 visual/collision 유지
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+Wrist chain: elbow -> wrist_yaw(revolute) -> EE(fixed)
+Arm reach: 0.15 m + 0.15 m = 기존 0.30 m 유지
+Wrist limit: ±0.9 rad, effort 12 Nm, velocity 4 rad/s, damping 1
+Frames: L/R_wrist_ik_frame 및 기존 grip disc 중심의 L/R_grip_frame 추가
+F/T: 기존 L/R_EE_joint 이름과 Gazebo sensor plugin 유지
+Palm: 기존 jmp EE mesh 및 주황색 원형 visual/collision 유지
+Transmissions: 13개 joint 순서로 확장하되 controller/제어 코드는 아직 변경하지 않음
+Validation: xacro 성공, check_urdf 성공, Release catkin_make 성공
+Runtime spawn test: Mission 2에서 dual_arm_main 없이 수행 예정
+```
 
 ---
 
