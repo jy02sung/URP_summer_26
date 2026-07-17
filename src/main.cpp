@@ -3,6 +3,7 @@
 #include <vector>
 #include <gazebo_msgs/SpawnModel.h>
 #include <gazebo_msgs/DeleteModel.h>
+#include <gazebo_msgs/GetModelState.h>
 #include <ros/package.h>
 
 // place 목표 지점(이송 목표)을 눈으로 확인할 수 있도록 vision pick 명령이 들어올 때마다 스폰하는
@@ -280,6 +281,7 @@ int main(int argc, char **argv)
     // place 목표 지점 표시/받침대용 스폰-삭제 서비스 클라이언트
     ros::ServiceClient spawn_model_client = nh.serviceClient<gazebo_msgs::SpawnModel>("/gazebo/spawn_sdf_model");
     ros::ServiceClient delete_model_client = nh.serviceClient<gazebo_msgs::DeleteModel>("/gazebo/delete_model");
+    ros::ServiceClient get_model_state_client = nh.serviceClient<gazebo_msgs::GetModelState>("/gazebo/get_model_state");
 
     // vision pick 명령이 들어올 때마다 이송 목표(target) 위치에 place_indicator를 새로 스폰.
     // 이전 실행에서 남아있을 수 있으므로 스폰 전에 항상 delete부터 시도한다(없으면 실패해도 무해).
@@ -383,6 +385,25 @@ int main(int argc, char **argv)
                        + Vector3d(MARKER_TO_BOX_CENTER, 0, 0);
         Vector3d transport_pt(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
 
+        // 오라클(시뮬레이션 전용): 실제 인식 파이프라인이 아니라 Gazebo ground truth로 물체의
+        // 실제 yaw를 직접 읽는다. ArUco pose는 위치만 쓰고(위 MARKER_TO_BOX_CENTER 보정 참고,
+        // 기존 코드가 방향 추정은 오블리크 각도에서 부정확하다고 판단해 안 씀), 물체가 회전된
+        // 상태에서 접근 기하 자체를 맞추려면 최소한 yaw는 알아야 한다. 실제 로봇에서는 이 블록을
+        // 깊이 카메라 기반 평면 피팅 등 진짜 인식으로 교체해야 한다 - 지금은 "접근 기하를
+        // 회전시키면 모서리 충돌이 없어지는지"를 검증하기 위한 자리표시자.
+        double obj_yaw = 0.0;
+        {
+            gazebo_msgs::GetModelState state_srv;
+            state_srv.request.model_name = "aruco_box_26";
+            if (get_model_state_client.call(state_srv) && state_srv.response.success) {
+                const auto& q = state_srv.response.pose.orientation;
+                obj_yaw = std::atan2(2.0*(q.w*q.z + q.x*q.y), 1.0 - 2.0*(q.y*q.y + q.z*q.z));
+            } else {
+                ROS_WARN("GetModelState(aruco_box_26) failed - assuming yaw=0");
+            }
+        }
+        const Eigen::Matrix3d obj_yaw_rot = Eigen::AngleAxisd(obj_yaw, Vector3d::UnitZ()).toRotationMatrix();
+
         // 양팔 동시 파지 간격(물체를 y축 양쪽에서 감싸는 형태)
         // aruco_box_26 기준: 15cm 정육면체, y방향 half-width = 0.075m
         // grasp_offset = half-width - 침투깊이(10mm, 기존 튜닝값 그대로 유지) = 0.075 - 0.010 = 0.065
@@ -397,21 +418,27 @@ int main(int argc, char **argv)
         Vector3d start_L = data.oMf[l_EE].translation();
         Vector3d start_R = data.oMf[r_EE].translation();
 
-        // 물체/이송목표 좌우 접근점 (y축 양쪽에서 감싸는 자세, z는 각각 물체/이송목표 높이)
-        Vector3d objL = obj + Vector3d(0, grasp_offset, 0);
-        Vector3d objR = obj + Vector3d(0, -grasp_offset, 0);
-        Vector3d transportL = transport_pt + Vector3d(0, grasp_offset, 0);
-        Vector3d transportR = transport_pt + Vector3d(0, -grasp_offset, 0);
+        // 물체/이송목표 좌우 접근점 (물체의 실제 yaw만큼 회전된 축 양쪽에서 감싸는 자세).
+        // squeeze_dir는 "중심 -> 왼손" 방향의 단위벡터를 물체 yaw로 회전시킨 것 - 이 방향을
+        // objL/R뿐 아니라 transportL/R에도 동일하게 적용해서, 파지~이송 내내(스퀴즈를 쥐고 있는
+        // 동안) 양손 간격 방향이 도중에 바뀌지 않도록 한다(안 그러면 lift/transport 전환 시점에
+        // 손 간격 방향이 갑자기 world-Y로 스냅해 쥐고 있던 그립에 충격을 준다).
+        const Vector3d squeeze_dir = obj_yaw_rot * Vector3d(0, grasp_offset, 0);
+        Vector3d objL = obj + squeeze_dir;
+        Vector3d objR = obj - squeeze_dir;
+        Vector3d transportL = transport_pt + squeeze_dir;
+        Vector3d transportR = transport_pt - squeeze_dir;
 
         // pick_pedestal(world 파일)이 파지점 바로 아래(z 1.05~1.15)에 y로 걸쳐 있어서, 시작 자세에서
         // objL/R로 곧장 3D 직선 이동하면 z가 받침대 상판보다 낮은 구간에서 x,y가 이미 받침대 영역에
         // 들어가 팔이 모서리에 부딪힌다. 그래서 접근을 2단계로 나눈다: 먼저 파지 높이(obj.z, 받침대
         // 상판보다 7.5cm 위)를 유지한 채 받침대 바깥쪽으로 STANDOFF_Y만큼 더 벌어진 standoff 지점으로
-        // 이동하고, 그다음 그 높이를 유지한 채 y 방향으로만 직선 이동해 파지점에 들어간다 - 마지막
-        // 구간은 항상 받침대보다 높은 높이에서만 움직이므로 부딪힐 수 없다.
+        // 이동하고, 그다음 그 높이를 유지한 채 (물체가 yaw만큼 돌아가 있으면 그 축을 따라) 직선
+        // 이동해 파지점에 들어간다 - 패드가 물체 면에 거의 수직으로 들어가 모서리를 안 침.
         const double STANDOFF_Y = 0.15;  // 받침대 y 반폭(0.085)보다 충분히 큰 여유
-        Vector3d standoffL = objL + Vector3d(0, STANDOFF_Y, 0);
-        Vector3d standoffR = objR + Vector3d(0, -STANDOFF_Y, 0);
+        const Vector3d standoff_dir = obj_yaw_rot * Vector3d(0, STANDOFF_Y, 0);
+        Vector3d standoffL = objL + standoff_dir;
+        Vector3d standoffR = objR - standoff_dir;
 
         // 파지 직후 곧바로 파지점->이송목표 대각선 직선으로 이동하면 받침대/바닥 근처를 스치듯 지나갈
         // 수 있다. 스퀴즈를 유지한 채(PHASE_GRASP_TO_PLACE) 먼저 수직으로 LIFT_HEIGHT만큼 들어올린 뒤,
@@ -492,8 +519,20 @@ int main(int argc, char **argv)
         // 2b) 들어올린 높이를 유지한 채 목표 지점으로 이동 (계속 PHASE_GRASP_TO_PLACE, 스퀴즈 유지)
         addCartesianSegment(liftL, transportL, liftR, transportR, PHASE_GRASP_TO_PLACE);
 
-        // 3) 내려놓기 완료 -> 원래 위치로 복귀
-        addCartesianSegment(transportL, start_L, transportR, start_R, PHASE_RETURN);
+        // 3) 놓기: transportL/R에 그대로 머물며(변위 0) 스퀴즈 목표힘을 램프다운 - 아래 온라인
+        //    루프의 PHASE_RELEASE 분기가 이 dwell 구간(1000 tick, CartesianLineTrajectory가
+        //    거리 0일 때 Tf=1.0으로 fallback하는 것을 그대로 이용) 동안 힘을 0으로 스르륵 뺀다.
+        addCartesianSegment(transportL, transportL, transportR, transportR, PHASE_RELEASE);
+
+        // 3b) 후퇴: 스퀴즈가 이미 0으로 빠진 상태에서, 파지 때와 같은 축(squeeze_dir)을 따라
+        //     양손을 서로 반대 방향으로 RETREAT_DIST만큼 벌려 물체에서 확실히 손을 뗀다.
+        const Vector3d retreat_dir = squeeze_dir.normalized() * RETREAT_DIST;
+        Vector3d retreatL = transportL + retreat_dir;
+        Vector3d retreatR = transportR - retreat_dir;
+        addCartesianSegment(transportL, retreatL, transportR, retreatR, PHASE_RETURN);
+
+        // 3c) 복귀: 후퇴 지점에서 원래 대기 자세로.
+        addCartesianSegment(retreatL, start_L, retreatR, start_R, PHASE_RETURN);
 
         ROS_INFO("Vision pick(dual-arm): object(world)=[%.3f %.3f %.3f], transport=[%.3f %.3f %.3f]",
                  obj.x(), obj.y(), obj.z(),
@@ -794,7 +833,7 @@ int main(int argc, char **argv)
             int phase_this_tick = (traj_cnt < dual_arm_phase_trajectory.size())
                                        ? dual_arm_phase_trajectory(traj_cnt) : task_phase;
 
-            if (phase_this_tick == PHASE_GRASP_TO_PLACE) {
+            if (phase_this_tick == PHASE_GRASP_TO_PLACE || phase_this_tick == PHASE_RELEASE) {
                 // ===== 어드미턴스 제어 (파지~내려놓기 구간): x,y 위치추종 + z 힘추종 =====
                 // x_cmd(위치)를 매 tick 새로 계산해 IK로 q_cmd를 구하고, 그 q_cmd를 이번 tick의
                 // 목표 관절각/속도/가속도로 그대로 쓴다 (기존 임피던스처럼 토크에 더하는 방식이 아님).
@@ -826,6 +865,24 @@ int main(int argc, char **argv)
                     deltaYR = xR_actual(1) - xR_d(1);
                     admittance_initialized = true;
                 }
+
+                // PHASE_RELEASE 진입 첫 tick: ticks_in_release를 0부터 다시 세기 시작.
+                // (PHASE_GRASP_TO_PLACE 쪽은 위 admittance_initialized 블록과 동일한 패턴)
+                if (phase_this_tick == PHASE_RELEASE) {
+                    if (!release_initialized) {
+                        ticks_in_release = 0;
+                        release_initialized = true;
+                    } else {
+                        ticks_in_release++;
+                    }
+                } else {
+                    release_initialized = false;  // GRASP_TO_PLACE 동안은 항상 리셋 상태로 유지
+                }
+                const double release_ramp = phase_this_tick == PHASE_RELEASE
+                    ? std::min(1.0, (double)ticks_in_release / RELEASE_RAMP_TICKS)
+                    : 0.0;
+                const double target_fd_left  = ADMITTANCE_FD_Y_LEFT  * (1.0 - release_ramp);
+                const double target_fd_right = ADMITTANCE_FD_Y_RIGHT * (1.0 - release_ramp);
 
                 // F/T: 접촉 노이즈 완화 위해 기존과 동일하게 10Hz LPF 적용 후 world frame으로 변환
                 for (int k = 0; k < 3; k++) {
@@ -893,8 +950,8 @@ int main(int argc, char **argv)
                 // 옮겨진다 (deltaY는 그 위에 얹히는 작은 압착 보정일 뿐). 힘 오차항은 위 compressive_force와
                 // 동일하게 world-Y 고정 대신 동적 squeeze_axis에 투영한 성분을 쓴다 - 이는 손목 정렬
                 // 게이트뿐 아니라 admittance 법칙 자체의 입력이 바뀌는 실제 동작 변화다(순수 리팩터링 아님).
-                double deltaYL_ddot = (F_ext_L.dot(squeeze_axis) - ADMITTANCE_FD_Y_LEFT  - Da_left[1]*xL_cmd_dot(1))  / Ma_left[1];
-                double deltaYR_ddot = (F_ext_R.dot(squeeze_axis) - ADMITTANCE_FD_Y_RIGHT - Da_right[1]*xR_cmd_dot(1)) / Ma_right[1];
+                double deltaYL_ddot = (F_ext_L.dot(squeeze_axis) - target_fd_left  - Da_left[1]*xL_cmd_dot(1))  / Ma_left[1];
+                double deltaYR_ddot = (F_ext_R.dot(squeeze_axis) - target_fd_right - Da_right[1]*xR_cmd_dot(1)) / Ma_right[1];
 
                 // Euler 적분으로 command(x_cmd) 생성
                 xL_cmd_dot += xL_cmd_ddot * SAMPLING_TIME;

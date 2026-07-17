@@ -141,7 +141,7 @@ double target_torque[DoF] = {0, };
 // /dual_arm/TaskPhase(std_msgs/Int32) 구독으로 수동 오버라이드 가능 (기본값: 접근, 어드미턴스 OFF).
 // PHASE_SCAN(3)은 Head 자동 스캔 중에만 내부적으로 쓰이며 수동 오버라이드 대상이 아니다
 // (msgCallbackTaskPhase의 범위 체크가 PHASE_APPROACH~PHASE_RETURN까지만 허용).
-enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2, PHASE_SCAN = 3 };
+enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2, PHASE_SCAN = 3, PHASE_RELEASE = 4 };
 int task_phase = PHASE_APPROACH;
 
 // F/T 센서 측정값 (force.x,y,z), /dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor 콜백에서 갱신
@@ -175,6 +175,13 @@ const int    WRIST_ALIGN_HOLD_TICKS        = 200;   // 0.20s @ 1kHz - must stay 
 // 손목 정렬 상태 (접촉+저토크가 WRIST_ALIGN_HOLD_TICKS 동안 유지되면 ready로 래치)
 bool wrist_alignment_ready = false;
 int  wrist_alignment_ticks = 0;
+
+// 놓기(release) 상태: PHASE_RELEASE 진입 첫 tick에 초기화되고, 그 이후 tick마다
+// ticks_in_release가 증가하며 스퀴즈 목표힘을 RELEASE_RAMP_TICKS에 걸쳐 0으로 선형 감쇠시킨다.
+bool release_initialized = false;
+int  ticks_in_release = 0;
+const int RELEASE_RAMP_TICKS = 500;   // 0.5s @ 1kHz - 스퀴즈 목표힘을 이 tick 수에 걸쳐 0으로 램프다운
+const double RETREAT_DIST = 0.08;     // 놓은 뒤 양손을 서로 반대 방향으로 물러나는 거리 [m]
 
 // 가상 질량-댐핑-강성 파라미터 (튜닝용). 배열 인덱스는 world frame [x,y,z]지만, 이 로봇의 실제
 // 스퀴즈(파지) 방향은 world Z(수직)가 아니라 world Y다 - objL/objR이 obj ± (0,grasp_offset,0)로
