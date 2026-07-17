@@ -89,7 +89,9 @@ enum GraspState {
     GRASP_CONTACT_WAIT,
     GRASP_HOLDING,
     GRASP_LIFT,
-    GRASP_ROTATE
+    GRASP_ROTATE,
+    GRASP_PLACE,
+    GRASP_RELEASE
 };
 
 GraspState grasp_state = GRASP_IDLE;
@@ -167,8 +169,8 @@ Vector3d r_ft_torque = Vector3d::Zero();
 
 Vector3d grasp_current_goalL = Vector3d::Zero();   // 힘 제어 중 실시간으로 조정되는 목표
 Vector3d grasp_current_goalR = Vector3d::Zero();
-double force_control_gain = 0.00000005;   // Kf, [m/N] 튜닝 필요
-double target_grasp_force = 100.0;         // [N] 목표 파지력
+double force_control_gain = 0.0005;   // Kf, [m/N] 튜닝 필요
+double target_grasp_force = 30.0;         // [N] 목표 파지력
 double contact_force_threshold = 1.0;     // [N] 접촉 감지 임계값
 
 double l_contact_force_filtered = 0.0;
@@ -191,8 +193,8 @@ double grasp_locked_forceR = 0.0;
 
 // ── y축 어드미턴스 제어 (K=0, 힘 목표 추종) ──
 double M_d = 1;
-double D_d = 260.0;
-double K_d_adm = 1000.0;   // 어드미턴스 y축 가상 강성 (물체 kp=30000보다 커야 함)
+double D_d = 50.0;
+double K_d_adm = 900.0;   // 어드미턴스 y축 가상 강성 (물체 kp=30000보다 커야 함)
 double y_L = 0.0, y_dot_L = 0.0;
 double y_R = 0.0, y_dot_R = 0.0;
 
@@ -206,7 +208,7 @@ bool integral_active_R = false;
 // ── x, z축 안정화 (K 포함, 원위치 복원) ──
 double M_xz = 1.0;
 double D_xz = 260 ;
-double K_xz = 1000.0;
+double K_xz = 400.0;
 double x_L = 0.0, x_dot_L = 0.0;
 double z_L = 0.0, z_dot_L = 0.0;
 double x_R = 0.0, x_dot_R = 0.0;
@@ -215,7 +217,15 @@ double z_R = 0.0, z_dot_R = 0.0;
 double lift_height = 0.1;        //  들어올리기
 double grasp_lift_startZ = 0.0;   // 들어올리기 시작 z 높이
 
-double box_mass = 5.0;   // 박스 질량 [kg]
+double place_height = 0.1;        // 내려놓기 (lift_height와 별개 변수, 지금은 같은 값)
+double box_center_z_place_start = 0.0;   // PLACE 시작 시점 z 높이 (여기서 place_height만큼 내려감)
+
+double release_offset = 0.0;      // RELEASE 중 양쪽으로 벌어지는 거리 (0 → release_distance)
+double release_distance = 0.05;   // 파지 해제 시 바깥쪽으로 벌리는 거리 [m]
+double release_speed_start = 0.005;   // 시작 속도 [m/s] — 천천히 빠지면서 마찰로 자연스럽게 내려앉게
+double release_speed_end = 0.05;      // 최종 속도 [m/s] — 어느정도 빠진 뒤엔 빠르게 마무리
+
+double box_mass = 1.0;   // 박스 질량 [kg]
 double gravity = 9.81;
 
 // SE3 T_world_A = data.oMf[A];   // 또는 oMi[A]도 가능
@@ -226,8 +236,8 @@ double gravity = 9.81;
 VectorXd q_bias_pin = VectorXd::Zero(DoF);   // 좋은 시작 자세 (Pinocchio 순서)
 double k_null = 0.0;   // null-space 게인, 튜닝 필요
 
-double EE_weight = 0.15 * 9.81;   // L_EE, R_EE 링크 자체 무게 (약 1.4715N)
-
+//double EE_weight = 0.15 * 9.81;   // L_EE, R_EE 링크 자체 무게 (약 1.4715N)
+double EE_weight = 1.47;
 double l_force_x_fast = 0.0;
 double r_force_x_fast = 0.0;
 
@@ -241,6 +251,44 @@ bool z_force_locked = false;
 double waist_rotate_target = 0.0;   // 목표 허리 각도 (라디안)
 
 double waist_angle_locked = 0.0;
+
+// z축(허리) 기준 회전 변환 함수
+inline Vector3d RotateZ(const Vector3d& v, double theta)
+{
+    double c = cos(theta), s = sin(theta);
+    return Vector3d(c*v(0) - s*v(1), s*v(0) + c*v(1), v(2));
+}
+
+inline Vector3d InverseRotateZ(const Vector3d& v, double theta)
+{
+    return RotateZ(v, -theta);   // 역회전은 -theta
+}
+
+Vector3d box_center_world = Vector3d::Zero();   // 마커로 인식한 박스 중심 (월드 기준, 고정값)
+double waist_ref_angle = 0.0;                    // GRASP_HOLDING 시작 시점의 허리각 (기준점)
+
+double box_width = 0.3;
+double EE_radius = 0.0325;
+
+double box_center_z_start = 0.0;
+
+double grasp_z_offset = -0.05;
+
+double waist_target_prev = 0.0;
+bool waist_target_initialized = false;
+
+double waist_theta_goal = 0.0;   // 회전 목표각 (몸 기준, 서서히 증가)
+
+Vector3d waist_axis_world = Vector3d(0, 0, 0.943);   // 허리 회전축 월드 위치 (xy만 중요)
+Vector3d box_offset_from_axis = Vector3d::Zero();     // 그랩 시작 시점의 "축→박스" 벡터
+
+Vector3d ee_L_offset_from_axis = Vector3d::Zero();
+Vector3d ee_R_offset_from_axis = Vector3d::Zero();
+
+double waist_ref_angle_at_rotate_start = 0.0;
+
+double theta_now_common = 0.0;   // 목표(계획)용 각도 — 목표 위치 계산 전용
+double theta_now_actual = 0.0;   // 실측 각도 — 힘 센서 변환/반력 보상 전용
 
 class DualArmControl
 {
@@ -269,7 +317,7 @@ class DualArmControl
                             const Vector3d& target_L, const Vector3d& target_R,
                             const VectorXd& q_seed, VectorXd& q_out,
                             const VectorXd& q_bias, double k_null,
-                            bool freeze_waist = false);    // 새 버전 (null-space 포함)
+                            bool freeze_waist = false, double waist_lock_value = 0.0);    // 새 버전 (null-space 포함)
         
 
         // === 추가: 직교 공간 직선 궤적 생성 ===

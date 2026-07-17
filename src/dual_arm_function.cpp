@@ -162,7 +162,7 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
                                       const Vector3d& target_L, const Vector3d& target_R,
                                       const VectorXd& q_seed, VectorXd& q_out,
                                       const VectorXd& q_bias, double k_null,
-                                      bool freeze_waist)   // ★추가 인자
+                                      bool freeze_waist, double waist_lock_value)   // ★인자 추가
 {
     const double lambda = 0.1;
     const double tol    = 1e-4;
@@ -171,12 +171,12 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
 
     const int l_shoulder_yaw_idx = 5;
     const int r_shoulder_yaw_idx = 9;
-    const int waist_idx = 0;   // ★허리의 Pinocchio 인덱스
+    const int waist_idx = 0;
 
     VectorXd q = q_seed;
     q(l_shoulder_yaw_idx) = 0.0;
     q(r_shoulder_yaw_idx) = 0.0;
-    if (freeze_waist) q(waist_idx) = 0.0;   // ★허리도 0으로 고정 (필요시)
+    if (freeze_waist) q(waist_idx) = waist_lock_value;   // ★0.0 → waist_lock_value
 
     for (int iter = 0; iter < maxIter; ++iter)
     {
@@ -203,7 +203,7 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
 
         J.col(l_shoulder_yaw_idx).setZero();
         J.col(r_shoulder_yaw_idx).setZero();
-        if (freeze_waist) J.col(waist_idx).setZero();   // ★자코비안에서도 허리 열 제거
+        if (freeze_waist) J.col(waist_idx).setZero();
 
         MatrixXd JJt = J * J.transpose() + (lambda*lambda) * MatrixXd::Identity(6,6);
         VectorXd dq_primary = J.transpose() * JJt.ldlt().solve(e);
@@ -226,7 +226,7 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
 
         q(l_shoulder_yaw_idx) = 0.0;
         q(r_shoulder_yaw_idx) = 0.0;
-        if (freeze_waist) q(waist_idx) = 0.0;
+        if (freeze_waist) q(waist_idx) = waist_lock_value;   // ★0.0 → waist_lock_value
 
         for (int i = 0; i < model.nq; ++i)
             q(i) = std::min(std::max(q(i), model.lowerPositionLimit(i)),
@@ -240,7 +240,7 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
                                       const Vector3d& target_L, const Vector3d& target_R,
                                       const VectorXd& q_seed, VectorXd& q_out)
 {
-    SolveIK_Position(model, data, l_EE, r_EE, target_L, target_R, q_seed, q_out, q_seed, 0.0, false);
+    SolveIK_Position(model, data, l_EE, r_EE, target_L, target_R, q_seed, q_out, q_seed, 0.0, false, 0.0);
 }
 ////////////////////////////////////////////////////////////////////////////////////////////
 //------------------------------ Cartesian Line Trajectory -------------------------------//
