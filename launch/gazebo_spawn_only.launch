@@ -1,0 +1,34 @@
+<launch>
+  <!-- Mission 2 diagnostic: Gazebo + robot only, without ros_control
+       controller spawners or dual_arm_main torque commands. -->
+  <arg name="paused" default="true" />
+  <arg name="gui" default="true" />
+  <arg name="use_sim_time" default="true" />
+
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(find dual_arm)/worlds/rrbot.world" />
+    <arg name="gui" value="$(arg gui)" />
+    <arg name="paused" value="$(arg paused)" />
+    <arg name="use_sim_time" value="$(arg use_sim_time)" />
+  </include>
+
+  <param name="robot_description"
+    command="$(find xacro)/xacro --inorder '$(find dual_arm)/urdf/dual_arm.xacro'" />
+
+  <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model"
+    respawn="false" output="screen"
+    args="-urdf -model dual_arm -param robot_description
+      -J Waist_joint 0
+      -J L_shoulder_pitch_joint 0
+      -J L_shoulder_roll_joint 0
+      -J L_shoulder_yaw_joint 0
+      -J L_elbow_joint 0
+      -J L_wrist_yaw_joint 0
+      -J R_shoulder_pitch_joint 0
+      -J R_shoulder_roll_joint 0
+      -J R_shoulder_yaw_joint 0
+      -J R_elbow_joint 0
+      -J R_wrist_yaw_joint 0
+      -J Head_yaw_joint 0
+      -J Head_pitch_joint 0" />
+</launch>

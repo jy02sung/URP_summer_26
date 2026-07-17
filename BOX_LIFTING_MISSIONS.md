@@ -143,10 +143,28 @@ Runtime spawn test: Mission 2에서 dual_arm_main 없이 수행 예정
 
 ### 통과 조건
 
-- [ ] model pose/twist에 NaN 없음
-- [ ] wrist가 joint limit로 튀지 않음
-- [ ] elbow와 shoulder가 비정상적으로 이동하지 않음
-- [ ] 모델이 10초 이상 안정적으로 유지됨
+- [x] model pose/twist에 NaN 없음
+- [x] wrist가 joint limit로 튀지 않음
+- [x] elbow와 shoulder가 비정상적으로 이동하지 않음
+- [x] 모델이 10초 이상 안정적으로 유지됨
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+Launch: gazebo_spawn_only.launch, paused:=true, gui:=true
+Control isolation: controller spawner와 dual_arm_main을 실행하지 않음
+Paused pose: 양쪽 shoulder/elbow/wrist 모두 0 rad
+Observed simulation time: 약 102 s
+Finite check: model pose/twist와 측정한 모든 arm joint 값이 finite
+Wrist after 약 92 s: left 0.00035 rad, right 0.00063 rad
+Maximum passive arm displacement: 약 0.089 rad
+10 s wrist drift: left +0.000040 rad, right +0.000077 rad
+10 s maximum joint drift: shoulder yaw 약 0.0029 rad, 좌우 대칭
+Model twist: linear 약 1.8e-7 m/s 이하, angular 약 5.9e-7 rad/s 이하
+Conclusion: 손목 삽입으로 인한 NaN, joint-limit 점프, 비대칭 startup 폭주는 재현되지 않음.
+Note: 무토크 자유 관절이므로 중력에 의한 약 0.09 rad의 대칭적 passive settling은 존재함.
+```
 
 ### 실패 시
 
