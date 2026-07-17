@@ -264,8 +264,10 @@ int main(int argc, char **argv)
     }
 
     // ===== 추가: EE 프레임 ID는 불변이므로 루프 밖에서 한 번만 구함 =====
-    pinocchio::FrameIndex l_EE = model.getFrameId("L_EE_joint");
-    pinocchio::FrameIndex r_EE = model.getFrameId("R_EE_joint");
+    // Position IK는 손목 pitch 아래, EE 원점과 일치하는 전용 frame을 사용한다.
+    // 실제 접촉면 중심은 별도의 L/R_grip_frame으로 유지한다.
+    pinocchio::FrameIndex l_EE = model.getFrameId("L_wrist_ik_frame");
+    pinocchio::FrameIndex r_EE = model.getFrameId("R_wrist_ik_frame");
 
     // ===== Head 자동 스캔: 다음 웨이포인트로 Head만 이동시키는 단일 세그먼트를 만들어 재생 준비 =====
     // 다른 관절(waist/양팔)은 scan_q에 저장된 직전 값을 그대로 유지한다.

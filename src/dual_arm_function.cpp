@@ -189,21 +189,14 @@ void DualArmControl::PDController(double* target_q, double* current_q, double* t
 ////////////////////////////////////////////////////////////////////////////////////////////
 //----------------------------------- Inverse Kinematics ---------------------------------//
 ////////////////////////////////////////////////////////////////////////////////////////////
-// DLS(Damped Least Squares) 위치 IK. 좌우를 6D 스택 태스크로 동시에 푼다.
+// DLS(Damped Least Squares) 위치 IK. 좌우를 6D 스택 태스크로 동시에 풀되,
+// 왼팔 frame에는 왼팔 6개 열만, 오른팔 frame에는 오른팔 6개 열만 허용한다.
 //   e = [tL - xL ; tR - xR]   (6x1, 위치 오차)
 //   J = [JL(상위3행) ; JR(상위3행)]  (6 x DoF)
 //   dq = Jᵀ (J Jᵀ + λ²I)⁻¹ e
 //
-// 2026-07-17: null-space q_pref(elbow-down + shoulder-roll 바깥벌림) 투영 추가 - jys 브랜치에서
-// 검증한 로직을 이 브랜치의 coupled(양팔 스택) 구조에 맞게 이식했다. jys는 waist/head를 고정하고
-// 양팔을 독립적으로 푸는 구조라, waist를 null-space에 추가로 포함시키려 하니 왼팔이 원하는 waist
-// 회전 방향과 오른팔이 원하는 방향이 반대로 나와(오프라인 검증: 왼팔 -0.029 vs 오른팔 +0.029)
-// 평균을 내면 서로 상쇄되는 문제가 있었다. 이 브랜치는 애초부터 waist를 포함해 양팔을 하나의 6D
-// 스택 태스크로 동시에 푸는 구조라 그 충돌 자체가 없다 - waist가 공유 변수가 아니라 태스크에
-// 자연스럽게 녹아있는 하나의 컬럼이기 때문. pinocchio로 재검증한 결과 실질 활성 관절 9개
-// (Waist+양팔 4관절씩, Head는 별도 분기라 애초 관여 안 함)로 6D 위치 태스크를 풀므로 rank=6이
-// 항상 유지되고(300회 랜덤자세 전부 동일, 이 세션 초반에 이미 확인) null-space 여유가 3으로
-// jys 최선의 경우(1)보다 훨씬 넉넉하다.
+// Waist/head 열은 0으로 유지하고 반복마다 seed 값으로 복원하므로 arm IK가 상체/머리를
+// 움직일 수 없다. 각 팔은 shoulder 3 + elbow + wrist yaw/pitch의 6DoF만 사용한다.
 void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& data,
                                       pinocchio::FrameIndex l_EE, pinocchio::FrameIndex r_EE,
                                       const Vector3d& target_L, const Vector3d& target_R,
@@ -213,14 +206,10 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
     const double tol    = 1e-4;   // 수렴 허용 오차 [m]
     const int    maxIter= 300;    // 최대 반복
     const double step   = 1.0;    // 스텝 스케일 (= K·Δt 개념, 발산하면 줄이기)
-    // null-space 선호 자세 게인. jys 브랜치 원값(0.35)을 이 coupled 구조(9개 활성 관절,
-    // null-space 여유 3)에 그대로 넣어보니 위치 수렴 잔차가 2.1cm까지 남았다(오프라인
-    // pinocchio 검증, 감쇠 의사역행렬이 완벽한 직교투영이 아니라 태스크 방향으로 약간
-    // 새는 게 원인). 0.02~0.35 스윕 결과 관절 마진(L_roll/R_roll)은 게인과 거의 무관하게
-    // 항상 0.16~0.34rad로 넉넉히 유지됐다 - 이 구조는 애초 여유가 커서 null-space가
-    // 세게 안 밀어도 붕괴하지 않는다. 잔차를 줄이면서도 선호가 유의미하게 반영되는
-    // 절충값으로 0.1을 선택(잔차 6.5mm, 여전히 elbow는 -0.95~-1.19로 아래쪽 유지).
-    const double posture_gain = 0.1;
+    // 위치 태스크의 여유 자유도로 elbow-down 자세를 부드럽게 선호한다.
+    // Damped projector는 완전한 직교 투영이 아니므로 큰 자세 gain은 위치 태스크로 샌다.
+    // 15DoF GUI 시험에서 0.1은 약 9.4 mm, 0.01은 약 3.0 mm 잔차를 남겨 0.001로 낮춘다.
+    const double posture_gain = 0.001;
 
     VectorXd q = q_seed;
 
@@ -254,9 +243,9 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
         pinocchio::getFrameJacobian(model, data, l_EE, pinocchio::LOCAL_WORLD_ALIGNED, JL);
         pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR);
 
-        MatrixXd J(6, model.nv);
-        J.topRows<3>()    = JL.topRows<3>();   // 위치 3행만
-        J.bottomRows<3>() = JR.topRows<3>();
+        MatrixXd J = MatrixXd::Zero(6, model.nv);
+        J.block(0, 3, 3, 6) = JL.block(0, 3, 3, 6);  // left arm only
+        J.block(3, 9, 3, 6) = JR.block(0, 9, 3, 6);  // right arm only
 
         MatrixXd JJt = J * J.transpose() + (lambda*lambda) * MatrixXd::Identity(6,6);
         MatrixXd JJt_inv = JJt.ldlt().solve(MatrixXd::Identity(6,6));
@@ -264,24 +253,31 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
 
         VectorXd dq = Jpinv * e;
 
-        // Null-space 투영: (I - J⁺J)로 태스크에 영향 없는 방향만 골라 q_pref를 soft하게
-        // 반영한다. Head_yaw/Head_pitch는 애초 J의 해당 컬럼이 0이라 (I-J⁺J)의 그 자리
-        // 대각항이 1로 남는데, q_pref-q 값을 명시적으로 0으로 마스킹해서 Head가 이 항으로
-        // 끌려가지 않게 막는다(다른 관절 행에는 영향 없음 - Head 컬럼이 J에서 이미 0이라
-        // N의 비대각 결합도 전부 0).
+        // Null-space 자세 항도 팔에만 허용한다.
         MatrixXd N = MatrixXd::Identity(model.nv, model.nv) - Jpinv * J;
         VectorXd postureErr = posture_gain * (q_pref - q);
-        postureErr(1) = 0.0;  // Head_yaw
-        postureErr(2) = 0.0;  // Head_pitch
+        postureErr.head<3>().setZero();
         dq += N * postureErr;
 
+        // 수치 오차까지 포함해 waist/head 변화량을 완전히 차단한다.
+        dq.head<3>().setZero();
+
         q += step * dq;
+        q.head<3>() = q_seed.head<3>();
 
         // 관절 한계 클램핑
         for (int i = 0; i < model.nq; ++i)
             q(i) = std::min(std::max(q(i), model.lowerPositionLimit(i)),
                                            model.upperPositionLimit(i));
+
+        // URDF의 ±0.9/±0.6은 파손 방지 물리 한계다. 위치-only IK가 여유 자유도로
+        // 손목을 끝까지 사용하는 것을 막고 정상 운전 범위 안에서만 해를 찾는다.
+        constexpr double wrist_ik_limit = 0.35;
+        for (const int i : {7, 8, 13, 14})
+            q(i) = std::min(std::max(q(i), -wrist_ik_limit), wrist_ik_limit);
     }
+
+    q.head<3>() = q_seed.head<3>();
 
     q_out = q;
 }

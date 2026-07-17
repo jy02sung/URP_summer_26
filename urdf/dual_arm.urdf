@@ -240,7 +240,7 @@
     </inertial>
   </link>
   <joint name="L_wrist_ik_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0 0 -0.10"/>
+    <origin rpy="0 0 0" xyz="0 0 -0.03"/>
     <parent link="L_wrist_pitch"/>
     <child link="L_wrist_ik_frame"/>
   </joint>
@@ -474,7 +474,7 @@
     </inertial>
   </link>
   <joint name="R_wrist_ik_joint" type="fixed">
-    <origin rpy="0 0 0" xyz="0 0 -0.10"/>
+    <origin rpy="0 0 0" xyz="0 0 -0.03"/>
     <parent link="R_wrist_pitch"/>
     <child link="R_wrist_ik_frame"/>
   </joint>

@@ -1,6 +1,6 @@
 #include "dual_arm_function.cpp"
 
-double dual_arm_cmd[DoF] = {0,};   // modeling용 관절각 (0:waist 1:head_yaw 2:head_pitch 3~6:L arm 7~10:R arm)
+double dual_arm_cmd[DoF] = {0,};   // 0:waist, 1~2:head, 3~8:left arm, 9~14:right arm
 double ee_target[6] = {0,};      // simulation용 목표 EE 위치
 int a = 0;
 
@@ -92,54 +92,54 @@ int main(int argc, char **argv)
                         cin >> dual_arm_cmd[i];
                     }
 
-                    cout << "Enter left arm angles(4): " << endl;
-                    for (int i = 3; i < 7; i++) {
+                    cout << "Enter left arm angles(6: shoulder3 elbow wrist_yaw wrist_pitch): " << endl;
+                    for (int i = 3; i < 9; i++) {
                         cin >> dual_arm_cmd[i];
                     }
 
-                    cout << "Enter right arm angles(4): " << endl;
-                    for (int i = 7; i < 11; i++) {
+                    cout << "Enter right arm angles(6: shoulder3 elbow wrist_yaw wrist_pitch): " << endl;
+                    for (int i = 9; i < 15; i++) {
                         cin >> dual_arm_cmd[i];
                     }
                     do_publish = true;
                 }
                 else if (a == 1) {
-                    double t[DoF] = {45, 0,0, 0, 0, 0, 0, 0, 0, 0, 0};
+                    double t[DoF] = {45, 0,0, 0,0,0,0,0,0, 0,0,0,0,0,0};
                     for (int i = 0; i < DoF; i++) {
                         dual_arm_cmd[i] = t[i];
                     }
                     do_publish = true;
                 }
                 else if (a == 2) {
-                    double t[DoF] = {0, 0,0, -90, 0, 0, 0, -90, 0, 0, 0};
+                    double t[DoF] = {0, 0,0, -90,0,0,0,0,0, -90,0,0,0,0,0};
                     for (int i = 0; i < DoF; i++) {
                         dual_arm_cmd[i] = t[i];
                     }
                     do_publish = true;
                 }
                 else if (a == 3) {
-                    double t[DoF] = {0, 0,0, 0, 85, 0, 0, 0, -85, 0, 0};
+                    double t[DoF] = {0, 0,0, 0,85,0,0,0,0, 0,-85,0,0,0,0};
                     for (int i = 0; i < DoF; i++) {
                         dual_arm_cmd[i] = t[i];
                     }
                     do_publish = true;
                 }
                 else if (a == 4) {
-                    double t[DoF] = {0, 0,0, -90, 0, 90, -90, -90, 0, -90, -90};
+                    double t[DoF] = {0, 0,0, -90,0,90,-90,0,0, -90,0,-90,-90,0,0};
                     for (int i = 0; i < DoF; i++) {
                         dual_arm_cmd[i] = t[i];
                     }
                     do_publish = true;
                 }
                 else if (a == 5) {
-                    double t[DoF] = {0, 0,0, 0, 0, -90, 0, 0, 0, 0, -90};
+                    double t[DoF] = {0, 0,0, 0,0,-90,0,0,0, 0,0,0,-90,0,0};
                     for (int i = 0; i < DoF; i++) {
                         dual_arm_cmd[i] = t[i];
                     }
                     do_publish = true;
                 }
                 else if (a == 6) {
-                    double t[DoF] = {0, 0,0, 0, 0, 0, 0, 0, 0, 0, 0};
+                    double t[DoF] = {0, 0,0, 0,0,0,0,0,0, 0,0,0,0,0,0};
                     for (int i = 0; i < DoF; i++) {
                         dual_arm_cmd[i] = t[i];
                     }

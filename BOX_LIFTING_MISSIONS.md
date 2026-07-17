@@ -327,10 +327,30 @@ Final wrists: L yaw=-0.000057, L pitch=0.000302, R yaw=-0.000162, R pitch=0.0013
 
 ### 통과 조건
 
-- [ ] head pitch 동작 중 waist/arms/head yaw 고정
-- [ ] arm IK 중 waist/head 고정
-- [ ] 양팔이 기존 standoff와 contact 목표에 도달
-- [ ] wrist가 IK 계산 때문에 joint limit로 이동하지 않음
+- [x] head pitch 동작 중 waist/arms/head yaw 고정
+- [x] arm IK 중 waist/head 고정
+- [x] 양팔이 기존 standoff에 도달하고 contact 목표에서 실제 접촉
+- [x] wrist가 IK 계산 때문에 URDF joint limit로 이동하지 않음
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+IK frames: L/R_wrist_ik_frame을 EE 원점과 같은 위치에 배치해 사용
+Allowed Jacobian columns: left 3..8, right 9..14; waist/head columns는 항상 0
+Hard lock: 매 IK 반복에서 waist/head q와 dq를 seed 값으로 복원
+Operational wrist clamp in IK: yaw/pitch 모두 ±0.35 rad (URDF 물리 한계보다 안쪽)
+Head-only GUI test: head pitch 0.19995 rad 도달, waist 변화 0.000002 rad
+Head-only test의 나머지 관절 최대 변화: 약 0.0019 rad
+Small IK test: 양손 world X +0.02 m, 최종 위치 오차 좌/우 약 0.87 mm
+Small IK 중 waist/head 최대 변화: 약 0.00014 rad, wrist 최대 0.0253 rad
+Posture gain: damped null-space leakage 때문에 0.1 -> 0.01 -> 0.001로 낮춰 오차 9.4 mm -> 3.0 mm -> 0.87 mm
+Legacy standoff targets: left [0.45, 0.04, 1.20], right [0.45, -0.34, 1.20]
+Standoff actual error: left 2.05 mm, right 2.42 mm; wrist 최대 0.0551 rad
+Contact targets: left [0.45, -0.11, 1.20], right [0.45, -0.19, 1.20]
+Contact result: 물체 collision으로 정지, F/T 힘 크기 left 약 5.4 N, right 약 6.1 N
+Known next issue: 접촉 외력으로 left wrist pitch가 -0.388 rad까지 밀림. Mission 5 soft limit/복원 토크 대상.
+```
 
 ---
 
