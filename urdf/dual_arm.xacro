@@ -400,11 +400,11 @@
          against this branch's actual arm geometry, same way the old disc pad
          needed 3 rounds of offline recomputation. -->
     <collision name="L_EE_palm_collision">
-      <origin xyz="0 -0.0375 -0.005" rpy="0 0 0" />
+      <origin xyz="0 0.0125 -0.005" rpy="0 0 0" />
       <geometry><box size="0.090 0.025 0.090" /></geometry>
     </collision>
     <visual name="L_EE_grip_pad_visual">
-      <origin xyz="0 -0.0375 -0.005" rpy="0 0 0" />
+      <origin xyz="0 0.0125 -0.005" rpy="0 0 0" />
       <geometry><box size="0.090 0.025 0.090" /></geometry>
       <material name="grip_pad_visual_dark"><color rgba="0.12 0.12 0.12 1" /></material>
     </visual>
@@ -713,11 +713,11 @@
          against this branch's actual arm geometry, same way the old disc pad
          needed 3 rounds of offline recomputation. -->
     <collision name="R_EE_palm_collision">
-      <origin xyz="0 0.0375 -0.005" rpy="0 0 0" />
+      <origin xyz="0 -0.0125 -0.005" rpy="0 0 0" />
       <geometry><box size="0.090 0.025 0.090" /></geometry>
     </collision>
     <visual name="R_EE_grip_pad_visual">
-      <origin xyz="0 0.0375 -0.005" rpy="0 0 0" />
+      <origin xyz="0 -0.0125 -0.005" rpy="0 0 0" />
       <geometry><box size="0.090 0.025 0.090" /></geometry>
       <material name="grip_pad_visual_dark"><color rgba="0.12 0.12 0.12 1" /></material>
     </visual>
