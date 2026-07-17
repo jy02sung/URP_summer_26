@@ -172,6 +172,45 @@ Note: 무토크 자유 관절이므로 중력에 의한 약 0.09 rad의 대칭�
 
 ---
 
+## Mission 2.5 — 손바닥 접촉 구조 일반화
+
+### 목표
+
+특정 박스 위치와 특정 IK 자세를 역산해 만든 패드 각도를 제거하고, 손목 순응으로 정렬 가능한
+좌우 대칭의 중립 손바닥을 만든다.
+
+### 작업
+
+- 패드 법선을 EE 로컬 Y축에 정확히 정렬한다.
+- 좌우 패드 위치와 자세를 완전히 대칭으로 만든다.
+- `grip_frame`을 각 패드 중심과 동일한 자세로 갱신한다.
+- 기존 EE mesh, 패드 크기, 마찰 및 F/T sensor 구조를 유지한다.
+- spawn-only GUI에서 self-collision, NaN 및 startup drift를 다시 검사한다.
+
+### 통과 조건
+
+- [x] 좌우 패드 transform이 기하학적으로 대칭
+- [x] xacro 및 URDF parser 성공
+- [x] 기존 EE/F/T 구조 유지
+- [x] spawn-only 상태에서 NaN과 손목 joint-limit 점프 없음
+- [x] GUI에서 패드가 손바닥 양쪽의 중립 위치에 보임
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+Left pad:  xyz=[0, -0.0325, 0], rpy=[+pi/2, 0, 0], normal=-EE local Y
+Right pad: xyz=[0, +0.0325, 0], rpy=[-pi/2, 0, 0], normal=+EE local Y
+Removed: 특정 IK 자세와 world Y를 역산한 비대칭 pad transform
+Preserved: EE mesh, disc radius/length, friction/contact 설정, EE fixed joint, F/T plugins
+Validation: mirrored transform assertion, xacro, check_urdf, Release build 성공
+GUI spawn-only: paused 초기 형상 확인 후 15 s unpaused 검사
+Wrist after 15 s: left 0.000055 rad, right 0.000093 rad
+Result: finite model state, self-collision 및 wrist joint-limit jump 없음
+```
+
+---
+
 ## Mission 3 — 13DoF controller와 상태 매핑
 
 ### 목표
