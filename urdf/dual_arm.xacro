@@ -344,112 +344,82 @@
       effort="30"
       velocity="8.5" />
   </joint>
-  <link
-    name="L_EE">
+  <link name="L_wrist_yaw">
     <inertial>
-      <origin
-        xyz="0 0 -0.003514"
-        rpy="0 0 0" />
-      <mass
-        value="0.15" />
-      <inertia
-        ixx="5.5E-05"
-        ixy="0"
-        ixz="0"
-        iyy="5.5E-05"
-        iyz="0"
-        izz="6.4E-05" />
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <mass value="0.5" />
+      <inertia ixx="2.5E-03" ixy="0" ixz="0" iyy="2.5E-03" iyz="0" izz="1.0E-03" />
     </inertial>
     <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://dual_arm/meshes/L_EE.STL" />
-      </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
-      </material>
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <geometry><cylinder radius="0.017" length="0.03" /></geometry>
+      <material name="wrist_dark"><color rgba="0.18 0.18 0.18 1" /></material>
     </visual>
-    <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://dual_arm/meshes/L_EE.STL" />
-      </geometry>
-    </collision>
-    <!-- 파지 안정성 보강용 평면 접촉 패드. L_EE.STL은 실측(메시 직접 파싱) 결과 약 6.5x6.5x5.4cm의
-         거의 구형(반경 ~3.25cm)이라 박스 평면과 사실상 점 접촉만 생겨 이송 중 자세가 흔들리기 쉽다.
-         2026-07-13 admittance 검증(F/T 로그) 중 좌/우 힘이 크게 비대칭(예: 같은 tick에 R이 -27N인데
-         L은 +7.5N)으로 나타나 물체가 회전하며 낙하하는 게 확인됐고, fk_debug(실제 SolveIK_Position/
-         grasp_offset=0.040/STANDOFF_Y=0.15 그대로 재현)로 다시 재보니 L_EE 로컬 Y축이 스퀴즈
-         방향(월드 Y축)과 dot=0.757(약 40.8° 어긋남) - 이전 주석의 dot~0.77(grasp_offset=0.043 기준)
-         수치는 grasp_offset이 0.040으로 바뀌면서 이미 stale이었다. 패드가 로컬 Y로 고정돼 있어
-         면 접촉이 아니라 모서리 접촉에 가까웠던 것으로 보고, rpy를 EE 로컬 프레임에서 "월드 Y가
-         가리키는 실제 방향"(target_local_dir = R_EE^T * worldY)으로 패드 법선이 향하도록 보정한다
-         (계산: fk_debug.cpp, 일회성 도구, 커밋 안 함). 위치(xyz)는 그대로 두고 방향만 보정 -
-         정확한 돌출거리 재튜닝(전체 손 형상 재설계, P2)은 이후 과제로 보류. -->
-    <!-- 원형 접촉 패드: 기존 사각 패드(box)+L자형 턱 조합을 하나의 평평한 원판(cylinder)으로 교체.
-         rpy는 실제 vision pick 파이프라인(base_seed=0 스폰 상태 -> segment 1 standoff -> segment 1b
-         접촉, main.cpp와 동일한 SolveIK_Position/CartesianLineTrajectory/grasp_offset=0.040/
-         STANDOFF_Y=0.15/v_des를 그대로 재현)을 처음부터 다시 풀어서, 실제 파지 순간 L_EE 프레임의
-         world 자세를 구한 뒤, 원판 법선(로컬 Z축)이 파지 시점 물체 옆면 법선(월드 Y축)과 정확히
-         평행해지는 방향으로 역산했다 (계산: fk_pad_calc.cpp, 일회성 도구, 커밋 안 함, dot=1.0 검증).
-         위치(origin xyz)는 기존 패드 자리를 그대로 재사용 - mesh 표면 돌출거리 재튜닝은 보류.
-         2026-07-17(1): SolveIK_Position에 null-space q_pref(elbow-down+out) 투영을 추가하면서
-         파지 시점 실제 손 자세가 달라져 rpy를 재계산했다(recompute_pad_rpy.py, 일회성 도구,
-         커밋 안 함, dot=1.0 재검증) - null-space 항이 관절 배치를 바꾸면 이 rpy도 다시 맞춰야 한다.
-         2026-07-17(2): origin xyz를 "탄젠트 접점" 방식으로 재계산했다(compute_tangent_offset.py,
-         일회성 도구, 커밋 안 함) - 기존엔 이전 사각패드 자리를 관성적으로 재사용/스케일링만 해왔는데,
-         Gazebo에서 패드가 손목 mesh에 파묻히거나 반대로 붕 뜨는 문제가 반복됐다. L_EE/R_EE 원점
-         (손목 구체 중심)에서 물체 중심 방향으로, 월드 Z성분을 0으로 강제한(손목 구체 중앙 높이
-         유지) 뒤 손목 구체 실측 반지름(0.0325m)만큼 나간 지점을 월드 좌표로 구하고, 이를 손
-         로컬 프레임으로 역변환해 origin xyz로 썼다 - 원판이 손목 구체 표면에 기하학적으로 정확히
-         접하도록(붕 뜸도 파묻힘도 없이) 만드는 게 목적. rpy는 그 후 사용자가 Gazebo 육안 확인으로
-         왼쪽 +7.5°/오른쪽 -7.5°(대칭) 미세 조정해 최종 확정했다. -->
-    <visual name="L_EE_grip_disc_visual">
-      <origin
-        xyz="0.001087 -0.020925 -0.024844"
-        rpy="0.752861 -0.000000 -2.834860" />
-      <geometry>
-        <cylinder radius="0.03" length="0.01" />
-      </geometry>
-      <material name="grip_pad_orange">
-        <color rgba="1.0 0.5 0.0 1" />
-      </material>
-    </visual>
-    <collision name="L_EE_grip_disc_collision">
-      <origin
-        xyz="0.001087 -0.020925 -0.024844"
-        rpy="0.752861 -0.000000 -2.834860" />
-      <geometry>
-        <cylinder radius="0.03" length="0.01" />
-      </geometry>
-    </collision>
+    <!-- No collision on this link: STL mesh + wrist + pad collisions overlapping
+         caused Gazebo startup instability in jys's testing. Keep collision only
+         on L_EE below. -->
   </link>
-  <joint
-    name="L_EE_joint"
-    type="fixed">
-    <origin
-      xyz="0 0 -0.3"
-      rpy="0 0 0" />
-    <parent
-      link="L_elbow" />
-    <child
-      link="L_EE" />
-    <axis
-      xyz="0 0 0" />
-    <dynamics damping="1"/>
-    <limit
-      lower="-1.57"
-      upper="1.57"
-      effort="30"
-      velocity="8.5" />
+  <joint name="L_wrist_yaw_joint" type="revolute">
+    <origin xyz="0 0 -0.15" rpy="0 0 0" />
+    <parent link="L_elbow" />
+    <child link="L_wrist_yaw" />
+    <axis xyz="0 0 1" />
+    <dynamics damping="1" />
+    <limit lower="-0.9" upper="0.9" effort="12" velocity="4.0" />
+  </joint>
+
+  <!-- Fixed IK-only frame: give it a tiny nonzero inertial or ODE's fixed-joint
+       lumping can become ill-conditioned with a controlled joint upstream. -->
+  <link name="L_wrist_ik_frame">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1.0E-06" ixy="0" ixz="0" iyy="1.0E-06" iyz="0" izz="1.0E-06" />
+    </inertial>
+  </link>
+  <joint name="L_wrist_ik_joint" type="fixed">
+    <origin xyz="0 0 -0.10" rpy="0 0 0" />
+    <parent link="L_wrist_yaw" />
+    <child link="L_wrist_ik_frame" />
+  </joint>
+
+  <link name="L_EE">
+    <inertial>
+      <origin xyz="0 0 -0.003514" rpy="0 0 0" />
+      <mass value="0.15" />
+      <inertia ixx="5.5E-05" ixy="0" ixz="0" iyy="5.5E-05" iyz="0" izz="6.4E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://dual_arm/meshes/L_EE.STL" /></geometry>
+      <material name=""><color rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" /></material>
+    </visual>
+    <!-- Single flat palm collision replaces the old STL-mesh + disc-pad combo.
+         Offset/size copied from jys (0.090 x 0.025 x 0.090 box, 3.75cm out in -Y,
+         0.5cm down) - this is a placeholder mount pose to be re-tuned in Task 6
+         against this branch's actual arm geometry, same way the old disc pad
+         needed 3 rounds of offline recomputation. -->
+    <collision name="L_EE_palm_collision">
+      <origin xyz="0 -0.0375 -0.005" rpy="0 0 0" />
+      <geometry><box size="0.090 0.025 0.090" /></geometry>
+    </collision>
+    <visual name="L_EE_grip_pad_visual">
+      <origin xyz="0 -0.0375 -0.005" rpy="0 0 0" />
+      <geometry><box size="0.090 0.025 0.090" /></geometry>
+      <material name="grip_pad_visual_dark"><color rgba="0.12 0.12 0.12 1" /></material>
+    </visual>
+  </link>
+  <joint name="L_EE_joint" type="fixed">
+    <origin xyz="0 0 -0.15" rpy="0 0 0" />
+    <parent link="L_wrist_yaw" />
+    <child link="L_EE" />
+  </joint>
+
+  <link name="L_grip_frame" />
+  <joint name="L_grip_joint" type="fixed">
+    <origin xyz="0 -0.0375 -0.005" rpy="0 0 0" />
+    <parent link="L_EE" />
+    <child link="L_grip_frame" />
   </joint>
   <link
     name="R_shoulder_pitch">
@@ -687,92 +657,82 @@
       effort="30"
       velocity="8.5" />
   </joint>
-  <link
-    name="R_EE">
+  <link name="R_wrist_yaw">
     <inertial>
-      <origin
-        xyz="0 0 -0.003514"
-        rpy="0 0 0" />
-      <mass
-        value="0.15" />
-      <inertia
-        ixx="5.5E-05"
-        ixy="0"
-        ixz="0"
-        iyy="5.5E-05"
-        iyz="0"
-        izz="6.4E-05" />
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <mass value="0.5" />
+      <inertia ixx="2.5E-03" ixy="0" ixz="0" iyy="2.5E-03" iyz="0" izz="1.0E-03" />
     </inertial>
     <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://dual_arm/meshes/R_EE.STL" />
-      </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
-      </material>
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <geometry><cylinder radius="0.017" length="0.03" /></geometry>
+      <material name="wrist_dark"><color rgba="0.18 0.18 0.18 1" /></material>
     </visual>
-    <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://dual_arm/meshes/R_EE.STL" />
-      </geometry>
-    </collision>
-    <!-- 파지 안정성 보강용 평면 접촉 패드 (L_EE 쪽 설명 참고, mesh 반경 ~3.25cm). 이전 주석은
-         "R_EE 로컬 Y축이 dot~0.99로 거의 완벽히 정렬"이라고 기록했으나, 이는 grasp_offset=0.043
-         기준 stale 수치였다. 2026-07-13 fk_debug(현재 코드의 grasp_offset=0.040/STANDOFF_Y=0.15
-         그대로 재현)로 재계산하니 실제로는 dot=0.955(약 17.2° 어긋남) - L_EE(40.8°)보다는 낫지만
-         무시할 수준은 아니다. L_EE와 동일한 방식으로 rpy를 target_local_dir(=R_EE^T*worldY)에
-         맞춰 보정한다 (계산: fk_debug.cpp, 일회성 도구, 커밋 안 함). -->
-    <!-- 원형 접촉 패드 - L_EE 쪽 설명 참고. 동일한 방식(recompute_pad_rpy.py로 null-space
-         적용된 파지 파이프라인 처음부터 재현, compute_tangent_offset.py로 탄젠트 접점 위치
-         재계산)으로 rpy/xyz 재계산, dot=1.0 검증. rpy 최종값은 왼쪽과 대칭으로 -7.5° 미세 조정. -->
-    <visual name="R_EE_grip_disc_visual">
-      <origin
-        xyz="0.008658 0.029717 -0.009909"
-        rpy="1.817146 -0.000000 2.611848" />
-      <geometry>
-        <cylinder radius="0.03" length="0.01" />
-      </geometry>
-      <material name="grip_pad_orange">
-        <color rgba="1.0 0.5 0.0 1" />
-      </material>
-    </visual>
-    <collision name="R_EE_grip_disc_collision">
-      <origin
-        xyz="0.008658 0.029717 -0.009909"
-        rpy="1.817146 -0.000000 2.611848" />
-      <geometry>
-        <cylinder radius="0.03" length="0.01" />
-      </geometry>
-    </collision>
+    <!-- No collision on this link: STL mesh + wrist + pad collisions overlapping
+         caused Gazebo startup instability in jys's testing. Keep collision only
+         on R_EE below. -->
   </link>
-  <joint
-    name="R_EE_joint"
-    type="fixed">
-    <origin
-      xyz="0 0 -0.3"
-      rpy="0 0 0" />
-    <parent
-      link="R_elbow" />
-    <child
-      link="R_EE" />
-    <axis
-      xyz="0 0 0" />
-    <dynamics damping="1"/>
-    <limit
-      lower="-1.57"
-      upper="1.57"
-      effort="30"
-      velocity="8.5" />
+  <joint name="R_wrist_yaw_joint" type="revolute">
+    <origin xyz="0 0 -0.15" rpy="0 0 0" />
+    <parent link="R_elbow" />
+    <child link="R_wrist_yaw" />
+    <axis xyz="0 0 1" />
+    <dynamics damping="1" />
+    <limit lower="-0.9" upper="0.9" effort="12" velocity="4.0" />
+  </joint>
+
+  <!-- Fixed IK-only frame: give it a tiny nonzero inertial or ODE's fixed-joint
+       lumping can become ill-conditioned with a controlled joint upstream. -->
+  <link name="R_wrist_ik_frame">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0.001" />
+      <inertia ixx="1.0E-06" ixy="0" ixz="0" iyy="1.0E-06" iyz="0" izz="1.0E-06" />
+    </inertial>
+  </link>
+  <joint name="R_wrist_ik_joint" type="fixed">
+    <origin xyz="0 0 -0.10" rpy="0 0 0" />
+    <parent link="R_wrist_yaw" />
+    <child link="R_wrist_ik_frame" />
+  </joint>
+
+  <link name="R_EE">
+    <inertial>
+      <origin xyz="0 0 -0.003514" rpy="0 0 0" />
+      <mass value="0.15" />
+      <inertia ixx="5.5E-05" ixy="0" ixz="0" iyy="5.5E-05" iyz="0" izz="6.4E-05" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry><mesh filename="package://dual_arm/meshes/R_EE.STL" /></geometry>
+      <material name=""><color rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" /></material>
+    </visual>
+    <!-- Single flat palm collision replaces the old STL-mesh + disc-pad combo.
+         Offset/size copied from jys (0.090 x 0.025 x 0.090 box, 3.75cm out in +Y,
+         0.5cm down) - this is a placeholder mount pose to be re-tuned in Task 6
+         against this branch's actual arm geometry, same way the old disc pad
+         needed 3 rounds of offline recomputation. -->
+    <collision name="R_EE_palm_collision">
+      <origin xyz="0 0.0375 -0.005" rpy="0 0 0" />
+      <geometry><box size="0.090 0.025 0.090" /></geometry>
+    </collision>
+    <visual name="R_EE_grip_pad_visual">
+      <origin xyz="0 0.0375 -0.005" rpy="0 0 0" />
+      <geometry><box size="0.090 0.025 0.090" /></geometry>
+      <material name="grip_pad_visual_dark"><color rgba="0.12 0.12 0.12 1" /></material>
+    </visual>
+  </link>
+  <joint name="R_EE_joint" type="fixed">
+    <origin xyz="0 0 -0.15" rpy="0 0 0" />
+    <parent link="R_wrist_yaw" />
+    <child link="R_EE" />
+  </joint>
+
+  <link name="R_grip_frame" />
+  <joint name="R_grip_joint" type="fixed">
+    <origin xyz="0 0.0375 -0.005" rpy="0 0 0" />
+    <parent link="R_EE" />
+    <child link="R_grip_frame" />
   </joint>
   <link
     name="Head">
