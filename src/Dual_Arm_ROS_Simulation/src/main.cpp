@@ -1000,9 +1000,8 @@ int main(int argc, char **argv)
                 scan_pitch_index = 0;
                 for (int i = 0; i < DoF; i++) scan_q[i] = dual_arm_initp[i];
 
-                // 이번 명령의 이송 목표 위치에 표시/받침대(place_indicator)를 스폰 - 스캔/파지가
-                // 끝나기 한참 전인 지금 미리 만들어둬야, 이후 이송 중에도 목표 지점을 눈으로 계속 볼 수 있다.
-                spawnPlaceIndicator(Vector3d(tx, ty, tz));
+                // 이송 목표의 place_indicator 받침대가 pick 영역과 팔 경로를 막으므로 스폰하지 않는다.
+                // 목표 좌표는 궤적 생성에만 사용한다.
 
                 ROS_INFO("Vision pick: moving head to scan pose (yaw=%.1fdeg, pitch=%.1fdeg) and checking for marker.",
                          HEAD_SCAN_YAW * rad2deg,
@@ -1357,24 +1356,28 @@ int main(int argc, char **argv)
             // The nominal IK applies these posture limits before admittance.
             // Reapply them to the final command so Cartesian squeeze cannot
             // fold the elbows inward or inherit a wrist-limit seed.
-            constexpr double MAX_INWARD_SHOULDER_ROLL = 0.15;
+            constexpr double MAX_INWARD_SHOULDER_ROLL = 0.10;
             constexpr int L_SHOULDER_ROLL_IDX = 4;
             constexpr int L_WRIST_YAW_IDX = 7;
             constexpr int R_SHOULDER_ROLL_IDX = 9;
             constexpr int R_WRIST_YAW_IDX = 12;
-            if (dual_arm_targetp_vec(L_SHOULDER_ROLL_IDX) < -MAX_INWARD_SHOULDER_ROLL) {
-                dual_arm_targetp_vec(L_SHOULDER_ROLL_IDX) = -MAX_INWARD_SHOULDER_ROLL;
+            constexpr double WRIST_YAW_COMPLIANCE_LIMIT = 0.35;
+            if (dual_arm_targetp_vec(L_SHOULDER_ROLL_IDX) > MAX_INWARD_SHOULDER_ROLL) {
+                dual_arm_targetp_vec(L_SHOULDER_ROLL_IDX) = MAX_INWARD_SHOULDER_ROLL;
                 dual_arm_targetv_vec(L_SHOULDER_ROLL_IDX) = 0.0;
             }
-            if (dual_arm_targetp_vec(R_SHOULDER_ROLL_IDX) > MAX_INWARD_SHOULDER_ROLL) {
-                dual_arm_targetp_vec(R_SHOULDER_ROLL_IDX) = MAX_INWARD_SHOULDER_ROLL;
+            if (dual_arm_targetp_vec(R_SHOULDER_ROLL_IDX) < -MAX_INWARD_SHOULDER_ROLL) {
+                dual_arm_targetp_vec(R_SHOULDER_ROLL_IDX) = -MAX_INWARD_SHOULDER_ROLL;
                 dual_arm_targetv_vec(R_SHOULDER_ROLL_IDX) = 0.0;
             }
-            // Wrist yaw는 파지 중 각도를 잠그지 않는다. 매 tick 실제 각도를
-            // nominal target으로 사용해 위치 스프링을 없애고 접촉면을 따라
-            // 수동적으로 회전할 수 있게 한다.
-            dual_arm_targetp_vec(L_WRIST_YAW_IDX) = dual_arm_jointp[L_WRIST_YAW_IDX];
-            dual_arm_targetp_vec(R_WRIST_YAW_IDX) = dual_arm_jointp[R_WRIST_YAW_IDX];
+            // 접촉면 정렬을 위한 수동 회전은 허용하되, 현재 각도를 무제한으로
+            // 따라가 관절 끝(+/-0.9 rad)에 붙지 않도록 파지 중 범위를 제한한다.
+            dual_arm_targetp_vec(L_WRIST_YAW_IDX) = std::max(
+                -WRIST_YAW_COMPLIANCE_LIMIT,
+                std::min(WRIST_YAW_COMPLIANCE_LIMIT, dual_arm_jointp[L_WRIST_YAW_IDX]));
+            dual_arm_targetp_vec(R_WRIST_YAW_IDX) = std::max(
+                -WRIST_YAW_COMPLIANCE_LIMIT,
+                std::min(WRIST_YAW_COMPLIANCE_LIMIT, dual_arm_jointp[R_WRIST_YAW_IDX]));
             dual_arm_targetv_vec(L_WRIST_YAW_IDX) = 0.0;
             dual_arm_targetv_vec(R_WRIST_YAW_IDX) = 0.0;
 
@@ -1498,11 +1501,18 @@ int main(int argc, char **argv)
         constexpr double WRIST_CENTER_KD = 0.15;
         constexpr int L_WRIST_YAW_IDX = 7;
         constexpr int R_WRIST_YAW_IDX = 12;
-        // 접근 중에는 중앙으로 복귀시키되, 파지가 시작되면 위치 강성을
-        // 완전히 제거해 손목이 접촉면을 따라 계속 순응하게 한다.
-        const double wrist_target_l = admittance_active ? dual_arm_jointp[L_WRIST_YAW_IDX] : 0.0;
-        const double wrist_target_r = admittance_active ? dual_arm_jointp[R_WRIST_YAW_IDX] : 0.0;
-        const double wrist_kp = admittance_active ? 0.0 : WRIST_CENTER_KP;
+        // 파지 중에는 범위 안에서 현재 각도를 따라가 자유 정렬을 허용하고,
+        // +/-0.35 rad를 넘을 때만 직접 스프링이 경계 안으로 복원한다.
+        constexpr double WRIST_YAW_COMPLIANCE_LIMIT = 0.35;
+        const double wrist_target_l = admittance_active
+            ? std::max(-WRIST_YAW_COMPLIANCE_LIMIT,
+                       std::min(WRIST_YAW_COMPLIANCE_LIMIT, dual_arm_jointp[L_WRIST_YAW_IDX]))
+            : 0.0;
+        const double wrist_target_r = admittance_active
+            ? std::max(-WRIST_YAW_COMPLIANCE_LIMIT,
+                       std::min(WRIST_YAW_COMPLIANCE_LIMIT, dual_arm_jointp[R_WRIST_YAW_IDX]))
+            : 0.0;
+        const double wrist_kp = WRIST_CENTER_KP;
         target_torque[L_WRIST_YAW_IDX] +=
             wrist_kp * (wrist_target_l - dual_arm_jointp[L_WRIST_YAW_IDX])
             -WRIST_CENTER_KD * dual_arm_jointv[L_WRIST_YAW_IDX];

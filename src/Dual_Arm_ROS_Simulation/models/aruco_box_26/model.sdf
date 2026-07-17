@@ -7,15 +7,15 @@
     <static>false</static>
     <link name="link">
       <inertial>
-        <mass>0.50</mass>
+        <mass>0.10</mass>
         <!-- 0.20 x 0.32 x 0.20m solid box. -->
         <inertia>
-          <ixx>0.005933</ixx>
+          <ixx>0.001187</ixx>
           <ixy>0</ixy>
           <ixz>0</ixz>
-          <iyy>0.003333</iyy>
+          <iyy>0.000667</iyy>
           <iyz>0</iyz>
-          <izz>0.005933</izz>
+          <izz>0.001187</izz>
         </inertia>
       </inertial>
 

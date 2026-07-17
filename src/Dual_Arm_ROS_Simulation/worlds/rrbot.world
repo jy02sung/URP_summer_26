@@ -19,6 +19,18 @@
       <uri>model://ground_plane</uri>
     </include>
 
+    <!-- 허리 회전 후 내려놓기 확인용 옆 책상 -->
+    <model name="side_table">
+      <static>true</static>
+      <pose>0.00 0.65 0.98 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>0.40 0.50 0.10</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>0.40 0.50 0.10</size></box></geometry>
+          <material><ambient>0.20 0.25 0.35 1</ambient><diffuse>0.25 0.32 0.45 1</diffuse></material>
+        </visual>
+      </link>
+    </model>
+
     <!-- Global light source -->
     <include>
       <uri>model://sun</uri>
@@ -69,27 +81,6 @@
           <material>
             <ambient>0.4 0.4 0.4 1</ambient>
             <diffuse>0.4 0.4 0.4 1</diffuse>
-          </material>
-        </visual>
-      </link>
-    </model>
-
-    <model name="place_pedestal">
-      <static>true</static>
-      <pose>0.55 0.12 0.98 0 0 0</pose>
-      <link name="link">
-        <collision name="collision">
-          <geometry>
-            <box><size>0.24 0.36 0.10</size></box>
-          </geometry>
-        </collision>
-        <visual name="visual">
-          <geometry>
-            <box><size>0.24 0.36 0.10</size></box>
-          </geometry>
-          <material>
-            <ambient>0.2 0.5 0.2 1</ambient>
-            <diffuse>0.2 0.5 0.2 1</diffuse>
           </material>
         </visual>
       </link>

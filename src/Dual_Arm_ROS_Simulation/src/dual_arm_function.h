@@ -177,11 +177,11 @@ int right_adm_recenter_cooldown = 0;
 // x는 nominal grasp trajectory 위에 덧붙이는 Cartesian compliance offset이다.
 double Ma_left[3]      = { 2.0, 2.0, 2.0 };       // 가상 질량 [kg]
 double Da_left[3]      = { 65.0, 65.0, 65.0 };    // 가상 댐핑 [N·s/m]
-double Ka_left[3]      = { 500.0, 0.0, 500.0 };   // squeeze(Y)는 힘 오차가 0일 때만 정지
+double Ka_left[3]      = { 0.0, 0.0, 0.0 };       // 원래 위치 제어 방식: 가상 위치 스프링 생략
 
 double Ma_right[3]     = { 2.0, 2.0, 2.0 };
 double Da_right[3]     = { 65.0, 65.0, 65.0 };
-double Ka_right[3]     = { 500.0, 0.0, 500.0 };
+double Ka_right[3]     = { 0.0, 0.0, 0.0 };
 
 Vector3d left_adm_pos  = Vector3d::Zero();
 Vector3d left_adm_vel  = Vector3d::Zero();
