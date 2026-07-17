@@ -62,15 +62,6 @@
       </link>
     </model>
 
-    <!-- Transport target (id=27): flat marker decal marking where the object should be placed.
-         Not detected by aruco_detection.launch (that's fixed to id 26) - it's a visual landmark
-         for the manually-entered SCREEN_VISION_TARGET xyz. -->
-    <include>
-      <uri>model://aruco_marker_27</uri>
-      <name>aruco_marker_27</name>
-      <pose>0.45 0.4 1.1505 0 0 0</pose>
-    </include>
-
     <!-- Focus camera on tall pendulum -->
     <gui fullscreen='0'>
       <camera name='user_camera'>
