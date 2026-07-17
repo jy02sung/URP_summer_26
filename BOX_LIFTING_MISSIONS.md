@@ -26,7 +26,7 @@ SCAN → APPROACH → WRIST_ALIGN → SQUEEZE → LIFT → HOLD → LOWER → RE
 
 ## 완료 기준
 
-- [ ] 양쪽 wrist yaw가 포함된 13DoF 모델이 안정적으로 스폰된다.
+- [x] 양쪽 wrist yaw/pitch가 포함된 15DoF 모델이 안정적으로 스폰된다.
 - [ ] waist와 head를 사용하지 않는 arm-only IK가 유지된다.
 - [ ] 손목이 접촉면에 제한적으로 정렬되고 관절 끝으로 열리지 않는다.
 - [ ] 양손이 목표 압착력을 안정적으로 유지한다.
@@ -211,11 +211,50 @@ Result: finite model state, self-collision 및 wrist joint-limit jump 없음
 
 ---
 
-## Mission 3 — 13DoF controller와 상태 매핑
+## Mission 2.6 — 15DoF wrist pitch URDF 확장
 
 ### 목표
 
-11DoF 제어 경로를 13DoF로 확장한다.
+양팔에 wrist pitch를 추가해 외력 기반 2축 손바닥 정렬이 가능한 15DoF 기구 구조를 만든다.
+
+### 작업
+
+- yaw와 손바닥 사이에 좌우 wrist pitch link/joint를 추가한다.
+- 전체 elbow-to-EE 길이 0.30 m를 유지한다.
+- pitch link에는 collision geometry를 두지 않는다.
+- pitch damping, limit 및 Gazebo implicit damping을 설정한다.
+- controller와 제어 코드 이식 전에 spawn-only GUI 안정성을 확인한다.
+
+### 통과 조건
+
+- [x] 좌우 wrist pitch joint가 포함된 URDF parser 성공
+- [x] elbow → yaw → pitch → EE 체인 확인
+- [x] 기존 중립 패드와 F/T 구조 유지
+- [x] paused 초기 wrist yaw/pitch가 모두 0 rad
+- [x] unpause 후 NaN, self-collision 및 joint-limit 점프 없음
+- [x] 모델이 15초 이상 안정적으로 유지됨
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+Kinematic chain: elbow -(0.15 m)-> yaw -(0.12 m)-> pitch -(0.03 m)-> EE
+Pitch joint: axis Y, limit ±0.6 rad, damping 1.5, effort 12 Nm, velocity 3 rad/s
+Pitch link: mass 0.15 kg, visual only, collision 없음
+Model: URDF non-fixed joint 15개, check_urdf 및 Release build 성공
+Paused: left/right yaw/pitch 모두 0 rad
+At 15 s: pitch 약 -0.00068 rad, yaw 최대 0.00013 rad, finite
+At 75 s: pitch 약 -0.000047 rad, yaw 최대 0.00066 rad, finite
+Result: NaN, 진동, self-collision 및 joint-limit jump 없음
+```
+
+---
+
+## Mission 3 — 15DoF controller와 상태 매핑
+
+### 목표
+
+11DoF 제어 경로를 15DoF로 확장한다.
 
 ### Pinocchio 순서
 
@@ -228,24 +267,26 @@ Result: finite model state, self-collision 및 wrist joint-limit jump 없음
 5  L shoulder yaw
 6  L elbow
 7  L wrist yaw
-8  R shoulder pitch
-9  R shoulder roll
-10 R shoulder yaw
-11 R elbow
-12 R wrist yaw
+8  L wrist pitch
+9  R shoulder pitch
+10 R shoulder roll
+11 R shoulder yaw
+12 R elbow
+13 R wrist yaw
+14 R wrist pitch
 ```
 
 ### 작업
 
-- `DoF=13`, `ARM_DOF=5`로 확장한다.
-- controller YAML과 launch에 wrist controller 두 개를 추가한다.
-- effort publisher 두 개를 추가한다.
+- `DoF=15`, `ARM_DOF=6`으로 확장한다.
+- controller YAML과 launch에 wrist controller 네 개를 추가한다.
+- effort publisher 네 개를 추가한다.
 - joint state는 이름 기반 매핑으로 읽는다.
 - ROS controller 순서와 Pinocchio 순서를 명시적으로 변환한다.
 
 ### 통과 조건
 
-- [ ] 13개 controller 로드 성공
+- [ ] 15개 controller 로드 성공
 - [ ] `/dual_arm/joint_states`에 wrist joint 포함
 - [ ] 모든 joint 값 유한
 - [ ] waist, arms, head가 시작 자세를 유지
@@ -257,15 +298,15 @@ Result: finite model state, self-collision 및 wrist joint-limit jump 없음
 
 ### 목표
 
-양팔 IK가 각 팔의 5개 joint만 사용하고 waist/head를 움직이지 않게 한다.
+양팔 IK가 각 팔의 6개 joint만 사용하고 waist/head를 움직이지 않게 한다.
 
 ### 작업
 
-- Left IK columns: `3,4,5,6,7`
-- Right IK columns: `8,9,10,11,12`
+- Left IK columns: `3,4,5,6,7,8`
+- Right IK columns: `9,10,11,12,13,14`
 - waist/head는 seed 값을 그대로 유지한다.
 - wrist가 추가된 새 IK frame과 contact frame을 사용한다.
-- 기존 11DoF 접근 목표를 13DoF 모델에서 다시 검증한다.
+- 기존 11DoF 접근 목표를 15DoF 모델에서 다시 검증한다.
 
 ### 통과 조건
 
