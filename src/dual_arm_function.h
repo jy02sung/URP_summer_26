@@ -35,9 +35,11 @@ using namespace Eigen;
 // 전역 변수 선언
 const double deg2rad = M_PI / 180;
 const double rad2deg = 180 / M_PI;
-const int DoF = 11;
-// DoF 배열 순서(Pinocchio model.nq 순서와 동일해야 함, urdf 트리 순회 결과로 실측 확인됨):
-// 0:Waist 1:Head_yaw 2:Head_pitch 3:L_sp 4:L_sr 5:L_sy 6:L_e 7:R_sp 8:R_sr 9:R_sy 10:R_e
+const int DoF = 13;
+// DoF 배열 순서(Pinocchio model.nq 순서와 동일해야 함, urdf 트리 순회 결과로 실측 확인됨,
+// Task 1 Step 5에서 pinocchio 로드로 재검증):
+// 0:Waist 1:Head_yaw 2:Head_pitch 3:L_sp 4:L_sr 5:L_sy 6:L_e 7:L_wy
+// 8:R_sp 9:R_sr 10:R_sy 11:R_e 12:R_wy
 const double SAMPLING_TIME = 0.001;
 const double SAMPLING_TIME_TRAJ = 0.001;
 
@@ -103,10 +105,11 @@ MatrixXd dual_arm_jointa_trajectory = MatrixXd::Zero(1,DoF);
 // double Kp[DoF] = { 1000, 500, 350, 50, 100, 500, 350, 50, 100 }; //이거 사용
 // double Kd[DoF] = { 10, 3, 1.5, 0.5, 1, 3, 1.5, 0.5, 1 };
 
-// 순서: Waist, Head_yaw, Head_pitch, L_sp,L_sr,L_sy,L_e, R_sp,R_sr,R_sy,R_e
+// 순서: Waist, Head_yaw, Head_pitch, L_sp,L_sr,L_sy,L_e,L_wy, R_sp,R_sr,R_sy,R_e,R_wy
 // head 게인은 초기값(관성이 작아 팔보다 낮게 시작) - 실제 거동 보고 재튜닝 필요
-double Kp[DoF] = { 1000, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500 };
-double Kd[DoF] = { 50,   30,  30,  1,   1,   1,   1,   1,   1,   1,   1   };
+// 손목 yaw(인덱스 7, 12)는 접촉 컴플라이언스용 소프트 게인(Task 2 yaml PID p:40/d:8과 동일)
+double Kp[DoF] = { 1000, 500, 500, 500, 500, 500, 500, 40, 500, 500, 500, 500, 40 };
+double Kd[DoF] = { 50,   30,  30,  1,   1,   1,   1,   8,  1,   1,   1,   1,   8  };
 
 double PD_torque[DoF] = {0, };
 double PD_acc[DoF] = {0, };
