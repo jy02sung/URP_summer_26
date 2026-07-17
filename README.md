@@ -37,7 +37,7 @@ Vision pick & place 실행:
 ```
 vision       ← vision 모드 선택
 0            ← 이송 목표 좌표 입력 선택
-0.45 0.15 1.2  ← 이송 목표 [x y z] (world frame, meter)
+0.45 0.17 1.2  ← 이송 목표 [x y z] (world frame, meter)
 ```
 
 ## 종료
