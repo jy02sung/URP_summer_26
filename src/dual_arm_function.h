@@ -136,6 +136,18 @@ int task_phase = PHASE_APPROACH;
 // F/T 센서 측정값 (force.x,y,z), /dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor 콜백에서 갱신
 Vector3d left_ft_force  = Vector3d::Zero();
 Vector3d right_ft_force = Vector3d::Zero();
+Vector3d left_ft_torque  = Vector3d::Zero();
+Vector3d right_ft_torque = Vector3d::Zero();
+
+enum WristComplianceState { WRIST_CENTERING = 0, WRIST_ALIGNING = 1, WRIST_ALIGNED = 2 };
+WristComplianceState wrist_compliance_state = WRIST_CENTERING;
+int wrist_contact_ticks = 0;
+int wrist_settle_ticks = 0;
+Vector4d aligned_wrist = Vector4d::Zero();  // L yaw, L pitch, R yaw, R pitch
+const double WRIST_CONTACT_FORCE = 3.0;     // 양손 모두 이 힘 이상일 때만 정렬 허용 [N]
+const double WRIST_ABS_LIMIT = 0.35;        // 정상 운전 절대 범위 [rad]
+const double WRIST_RESTORE_START = 0.30;    // 관성 오버슈트를 고려한 복원 시작점 [rad]
+const double WRIST_ALIGNED_WINDOW = 0.12;   // 정렬 후 저장 각도 주변 허용 범위 [rad]
 
 // F/T 로우패스 필터 상태 (어드미턴스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp 어드미턴스 블록에서 갱신)
 Vector3d left_ft_force_lpf     = Vector3d::Zero();

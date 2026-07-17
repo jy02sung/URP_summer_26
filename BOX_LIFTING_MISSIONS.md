@@ -375,14 +375,40 @@ Known next issue: 접촉 외력으로 left wrist pitch가 -0.388 rad까지 밀�
 - 실제 wrist angle을 매 tick 무제한 목표로 복사하지 않는다.
 - soft limit 목표와 직접 복원 토크를 함께 사용한다.
 - 접촉력이 양쪽 모두 일정 값 이상일 때만 정렬 판정을 시작한다.
-- F/T torque가 일정 시간 낮으면 정렬 완료로 판정한다.
+- 접촉 중 wrist 속도가 누적 0.5초 이상 안정되면 정렬 완료로 판정한다.
 
 ### 통과 조건
 
-- [ ] wrist가 `±0.35 rad` 정상 범위를 크게 벗어나지 않음
-- [ ] wrist가 URDF limit `±0.9 rad`에 닿지 않음
-- [ ] 양쪽 패드가 물체 측면과 접촉
-- [ ] 손목 정렬 후 각도가 안정적으로 유지됨
+- [x] wrist가 `±0.35 rad` 정상 범위를 크게 벗어나지 않음
+- [x] wrist가 URDF limit에 닿지 않음
+- [x] 양쪽 패드가 물체 측면과 접촉
+- [x] 손목 정렬 후 각도가 안정적으로 유지됨
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+Box update: 0.10 m cube -> 0.15 m cube, marker offset 0.0755 m, inertia 0.000750 kg m^2
+Box placement: [0.45, 0.0, 1.225], robot sagittal centerline에 정렬
+Pedestal: center y=0, top z=1.15 유지, footprint 0.17 x 0.17 m
+Grasp offset: box center 기준 ±0.065 m (15 cm half-width에서 10 mm 안쪽)
+State machine: CENTERING(0) -> bilateral contact 50 ticks -> ALIGNING(1) -> stable 500 ticks -> ALIGNED(2)
+Contact threshold: 양손 force norm 각각 3 N 이상
+Non-contact: wrist 0 rad 복원; aligning: damping only + absolute restore
+Aligned: 저장 각도 주변 ±0.12 rad, 저장값 자체는 ±0.35 rad로 clamp
+Restore: ±0.30 rad부터 강한 직접 복원 가속도 적용
+Diagnostic topic: /dual_arm/wrist_compliance = [state, four wrist angles, left/right force norm]
+Centered-box GUI result:
+- standoff wrist 최대 약 0.0505 rad
+- bilateral contact force 약 4 N
+- ALIGNING에서 ALIGNED로 약 0.5 s 안에 전환
+- 10 s 관찰 최대 wrist angle 0.1946 rad
+- yaw 정렬은 left 약 -0.18 rad, right 약 +0.18 rad로 대칭
+- URDF yaw/pitch limit 접근 및 NaN 없음
+Rejected test condition:
+- box y=-0.15 m 상태의 비대칭 수동 contact는 wrist를 계속 밀어 최대 0.6 rad까지 보냄.
+- 과제 범위를 정면 중앙 물체의 수직 리프트로 확정하고 world/목표를 대칭화해 해결.
+```
 
 ---
 

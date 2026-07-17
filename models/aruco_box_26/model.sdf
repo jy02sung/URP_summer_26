@@ -8,21 +8,21 @@
     <link name="link">
       <inertial>
         <mass>0.2</mass>
-        <!-- solid cube, side 0.1m: ixx=iyy=izz = (1/6)*m*s^2 -->
+        <!-- solid cube, side 0.15m: ixx=iyy=izz = (1/6)*m*s^2 -->
         <inertia>
-          <ixx>0.000333</ixx>
+          <ixx>0.000750</ixx>
           <ixy>0</ixy>
           <ixz>0</ixz>
-          <iyy>0.000333</iyy>
+          <iyy>0.000750</iyy>
           <iyz>0</iyz>
-          <izz>0.000333</izz>
+          <izz>0.000750</izz>
         </inertia>
       </inertial>
 
       <collision name="collision">
         <geometry>
           <box>
-            <size>0.1 0.1 0.1</size>
+            <size>0.15 0.15 0.15</size>
           </box>
         </geometry>
         <surface>
@@ -38,7 +38,7 @@
       <visual name="visual_box">
         <geometry>
           <box>
-            <size>0.1 0.1 0.1</size>
+            <size>0.15 0.15 0.15</size>
           </box>
         </geometry>
         <material>
@@ -51,7 +51,7 @@
            when this box is placed at a larger world-x than the camera).
            Reuses the aruco_marker_26 model's texture/material. -->
       <visual name="visual_marker_26">
-        <pose>-0.0505 0 0 0 0 0</pose>
+        <pose>-0.0755 0 0 0 0 0</pose>
         <geometry>
           <box>
             <size>0.001 0.05 0.05</size>
