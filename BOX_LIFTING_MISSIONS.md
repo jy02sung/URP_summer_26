@@ -286,11 +286,28 @@ Result: NaN, 진동, self-collision 및 joint-limit jump 없음
 
 ### 통과 조건
 
-- [ ] 15개 controller 로드 성공
-- [ ] `/dual_arm/joint_states`에 wrist joint 포함
-- [ ] 모든 joint 값 유한
-- [ ] waist, arms, head가 시작 자세를 유지
-- [ ] wrist 0 rad hold 성공
+- [x] 15개 controller 로드 성공
+- [x] `/dual_arm/joint_states`에 wrist joint 포함
+- [x] 모든 joint 값 유한
+- [x] waist, arms, head가 시작 자세를 유지
+- [x] wrist 0 rad hold 성공
+
+### 결과 기록
+
+```text
+Date: 2026-07-17
+Transmission/controller order: waist, left arm 6, right arm 6, head yaw/pitch
+Pinocchio order: waist, head yaw/pitch, left arm 6, right arm 6
+State mapping: /dual_arm/joint_states의 배열 위치 대신 joint name 기반으로 Pinocchio index에 매핑
+Runtime assertion: Pinocchio nq=15, nv=15 및 각 q index/name 출력
+Controllers: joint_state_controller + 15 effort controllers 모두 running
+Joint states: 15개 이름 수신, position/velocity 모두 finite
+First GUI attempt: 기존 arm acceleration PD 500/1에서 최대 약 4.8 rad/s 지속 진동 발생
+Diagnosis: channel/index 순서는 일치했으며 새 손목 질량이 추가된 계에 기존 값이 극단적으로 저감쇠
+Gain correction: waist/head 유지, jys 검증값 arm 160/25 및 wrist 40/8 적용
+Stable GUI result: 약 105 s 실행, 최대 |q|=0.00135 rad, 최대 |dq|=0.000056 rad/s
+Final wrists: L yaw=-0.000057, L pitch=0.000302, R yaw=-0.000162, R pitch=0.001352 rad
+```
 
 ---
 

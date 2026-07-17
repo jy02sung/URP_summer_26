@@ -1902,7 +1902,7 @@
 
   <transmission name="tran7">
     <type>transmission_interface/SimpleTransmission</type>
-    <joint name="R_shoulder_pitch_joint">
+    <joint name="L_wrist_pitch_joint">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
     </joint>
     <actuator name="motor7">
@@ -1913,7 +1913,7 @@
 
   <transmission name="tran8">
     <type>transmission_interface/SimpleTransmission</type>
-    <joint name="R_shoulder_roll_joint">
+    <joint name="R_shoulder_pitch_joint">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
     </joint>
     <actuator name="motor8">
@@ -1924,7 +1924,7 @@
 
   <transmission name="tran9">
     <type>transmission_interface/SimpleTransmission</type>
-    <joint name="R_shoulder_yaw_joint">
+    <joint name="R_shoulder_roll_joint">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
     </joint>
     <actuator name="motor9">
@@ -1935,7 +1935,7 @@
 
   <transmission name="tran10">
     <type>transmission_interface/SimpleTransmission</type>
-    <joint name="R_elbow_joint">
+    <joint name="R_shoulder_yaw_joint">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
     </joint>
     <actuator name="motor10">
@@ -1946,7 +1946,7 @@
 
   <transmission name="tran11">
     <type>transmission_interface/SimpleTransmission</type>
-    <joint name="R_wrist_yaw_joint">
+    <joint name="R_elbow_joint">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
     </joint>
     <actuator name="motor11">
@@ -1957,7 +1957,7 @@
 
   <transmission name="tran12">
     <type>transmission_interface/SimpleTransmission</type>
-    <joint name="Head_yaw_joint">
+    <joint name="R_wrist_yaw_joint">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
     </joint>
     <actuator name="motor12">
@@ -1968,10 +1968,32 @@
 
   <transmission name="tran13">
     <type>transmission_interface/SimpleTransmission</type>
-    <joint name="Head_pitch_joint">
+    <joint name="R_wrist_pitch_joint">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
     </joint>
     <actuator name="motor13">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <transmission name="tran14">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="Head_yaw_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor14">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <transmission name="tran15">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="Head_pitch_joint">
+      <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="motor15">
       <hardwareInterface>hardware_interface/EffortJointInterface</hardwareInterface>
       <mechanicalReduction>1</mechanicalReduction>
     </actuator>

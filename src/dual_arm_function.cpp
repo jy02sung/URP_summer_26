@@ -75,16 +75,16 @@ void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, Matrix
 {
 	double q_dot_des = 0.5;  // 원하는 각속도 (rad/s)
 
-	// 관절 인덱스 레이아웃: 0=waist,1=head_yaw,2=head_pitch,3~6=왼팔,7~10=오른팔
+	// 관절 인덱스 레이아웃: 0=waist,1=head_yaw,2=head_pitch,3~8=왼팔,9~14=오른팔
 	// 왼팔/오른팔 Tf를 각자의 최대 오차로 독립 계산 -> 변위가 작은 팔이 큰 팔의 Tf에 끌려가서
 	// 초반 속도가 지나치게 작아지는(=늦게 움직이는 것처럼 보이는) 문제를 제거한다.
 	// waist/head는 팔이 아니므로 셋 중 가장 긴 Tf(Tf_max)에 맞춘다.
 	double max_error_left = 0, max_error_right = 0, max_error_wh = 0;
-	for (int i = 3; i <= 6; i++) {
+	for (int i = 3; i <= 8; i++) {
 		double error = fabs(q_cmd[i] - q_ini[i]);
 		if (max_error_left < error) max_error_left = error;
 	}
-	for (int i = 7; i <= 10; i++) {
+	for (int i = 9; i <= 14; i++) {
 		double error = fabs(q_cmd[i] - q_ini[i]);
 		if (max_error_right < error) max_error_right = error;
 	}
@@ -104,8 +104,8 @@ void DualArmControl::JointTrajectoryQuintic(double* q_ini, double* q_cmd, Matrix
 	// 관절별 Tf 배열 (재생은 전부 t=0에서 동시에 시작, 각자 자신의 Tf에 도달하면 그 자리에서 정지 유지)
 	double Tf[DoF];
 	Tf[0] = Tf_max; Tf[1] = Tf_max; Tf[2] = Tf_max;
-	for (int i = 3; i <= 6;  i++) Tf[i] = Tf_left;
-	for (int i = 7; i <= 10; i++) Tf[i] = Tf_right;
+	for (int i = 3; i <= 8;  i++) Tf[i] = Tf_left;
+	for (int i = 9; i <= 14; i++) Tf[i] = Tf_right;
 
 	// 전체 재생 구간(step)은 가장 긴 Tf(=Tf_max) 기준. 이보다 Tf가 짧은 관절은 도달 후 목표값 유지.
 	int step = round(Tf_max / SAMPLING_TIME_TRAJ);
@@ -225,14 +225,14 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
     VectorXd q = q_seed;
 
     // elbow-down + shoulder-roll 바깥벌림 선호 자세(q_pref). 순서는 DoF 배열과 동일:
-    // 0:Waist 1:Head_yaw 2:Head_pitch 3:L_sp 4:L_sr 5:L_sy 6:L_e 7:R_sp 8:R_sr 9:R_sy 10:R_e.
-    // 이 브랜치엔 손목 조인트가 없어 jys의 q_pref 마지막 성분(wrist=0.0)은 뺐다. Waist/Head는
+    // 0:Waist 1:Head_yaw 2:Head_pitch 3~8:L_arm 9~14:R_arm. Wrist preference는 0 rad다.
+    // Waist/Head는
     // 0.0(중립) - Head는 애초 Jacobian에 관여 안 하므로 아래에서 null-space 기여분을 명시적으로
     // 0으로 마스킹한다(관여 안 하는데도 (I-J⁺J)의 대각항이 1이라 그대로 두면 Head가 원치 않게
     // 끌려간다).
     VectorXd q_pref = VectorXd::Zero(DoF);
     q_pref(3) = 0.80;  q_pref(4) =  0.55; q_pref(5) = -0.20; q_pref(6)  = -0.45;  // L arm
-    q_pref(7) = 0.80;  q_pref(8) = -0.55; q_pref(9) =  0.20; q_pref(10) = -0.45;  // R arm
+    q_pref(9) = 0.80; q_pref(10) = -0.55; q_pref(11) = 0.20; q_pref(12) = -0.45;  // R arm
 
     for (int iter = 0; iter < maxIter; ++iter)
     {
