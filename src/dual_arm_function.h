@@ -130,8 +130,17 @@ double target_torque[DoF] = {0, };
 // /dual_arm/TaskPhase(std_msgs/Int32) 구독으로 수동 오버라이드 가능 (기본값: 접근, 어드미턴스 OFF).
 // PHASE_SCAN(3)은 Head 자동 스캔 중에만 내부적으로 쓰이며 수동 오버라이드 대상이 아니다
 // (msgCallbackTaskPhase의 범위 체크가 PHASE_APPROACH~PHASE_RETURN까지만 허용).
-enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2, PHASE_SCAN = 3 };
+enum TaskPhase { PHASE_APPROACH = 0, PHASE_GRASP_TO_PLACE = 1, PHASE_RETURN = 2,
+                 PHASE_SCAN = 3, PHASE_CONTACT_APPROACH = 4 };
 int task_phase = PHASE_APPROACH;
+
+int grasp_start_row = 0;
+bool left_contact_latched = false;
+bool right_contact_latched = false;
+int bilateral_contact_ticks = 0;
+const double APPROACH_CONTACT_FORCE = 1.0;
+const double APPROACH_CONTACT_RELEASE_FORCE = 0.4;
+const int APPROACH_CONTACT_TICKS = 50;
 
 // F/T 센서 측정값 (force.x,y,z), /dual_arm/left_ft_sensor, /dual_arm/right_ft_sensor 콜백에서 갱신
 Vector3d left_ft_force  = Vector3d::Zero();
@@ -154,9 +163,10 @@ GraspGateState grasp_gate_state = GRASP_WAITING;
 int grasp_force_stable_ticks = 0;
 double grasp_pause_z_left = 0.0;
 double grasp_pause_z_right = 0.0;
-const double GRASP_FORCE_ON = 7.5;          // 양손 파지 인정 threshold [N]
-const double GRASP_FORCE_OFF = 6.0;         // 힘 손실 정지 threshold (채터링 방지 hysteresis) [N]
-const int GRASP_FORCE_STABLE_TICKS = 150;   // 0.15 s @ 1000 Hz
+const double GRASP_FORCE_ON = 2.0;          // 양손 파지 인정 threshold [N]
+const double GRASP_FORCE_OFF = 1.2;         // 힘 손실 정지 threshold (채터링 방지 hysteresis) [N]
+const double GRASP_FORCE_MAX = 8.0;         // 접촉 충격을 안정 파지로 오인하지 않는 상한 [N]
+const int GRASP_FORCE_STABLE_TICKS = 200;   // 0.20 s @ 1000 Hz
 
 // F/T 로우패스 필터 상태 (어드미턴스 F_ext로 쓰기 전에 접촉 노이즈 억제용, main.cpp 어드미턴스 블록에서 갱신)
 Vector3d left_ft_force_lpf     = Vector3d::Zero();
@@ -172,19 +182,19 @@ const double FT_LPF_CUTOFF_HZ  = 10.0;  // 컷오프 주파수 [Hz]
 // x,z(인덱스 0,2): 위치추종 admittance - M(ẍcmd−ẍd) + D(ẋcmd−ẋd) + K(xcmd−xd) = 0
 // y(인덱스 1):     힘추종 admittance   - M·ÿcmd + D·ẏcmd = F_ext,y − F_d,y  (K_y=0 고정, 아래서 0으로 둠)
 double Ma_left[3] = { 2.0, 2.0, 2.0 };      // 가상 질량 [kg]
-double Da_left[3] = { 65.0, 65.0, 65.0 };   // 가상 댐핑 [N·s/m]
+double Da_left[3] = { 65.0, 100.0, 65.0 };  // y damping 상향: 접촉력 진동/충격 억제 [N·s/m]
 double Ka_left[3] = { 500.0, 0.0, 500.0 };  // 가상 강성 [N/m] - y(스퀴즈)는 순수 힘제어라 0 고정
 
 double Ma_right[3] = { 2.0, 2.0, 2.0 };
-double Da_right[3] = { 65.0, 65.0, 65.0 };
+double Da_right[3] = { 65.0, 100.0, 65.0 };
 double Ka_right[3] = { 500.0, 0.0, 500.0 };
 
 // 스퀴즈 목표 힘 F_d,y [N]. 왼팔은 obj +y쪽에서 -y로 누르고 오른팔은 obj -y쪽에서 +y로 눌러
 // 서로를 향해 조이므로, F/T가 world frame으로 변환된 뒤의 부호는 팔마다 반대다 - 2026-07-13 Gazebo
 // 실측(PHASE_APPROACH 구간, 어드미턴스 미개입 순수 위치유지 스퀴즈)으로 확인:
 // F_ext_L(y) 평균 +5.4N(양수), F_ext_R(y) 평균 -3.4N(음수). 그래서 목표값도 팔마다 부호를 맞춘다.
-const double ADMITTANCE_FD_Y_LEFT  =  10.0;
-const double ADMITTANCE_FD_Y_RIGHT = -10.0;
+const double ADMITTANCE_FD_Y_LEFT  =  4.0;
+const double ADMITTANCE_FD_Y_RIGHT = -4.0;
 
 // 어드미턴스 command 적분 상태 (tick 간 유지). PHASE_GRASP_TO_PLACE 진입 순간 실제 EE 위치로
 // 초기화되고(admittance_initialized), 그 밖에서는 다음 진입에 대비해 리셋된다 (main.cpp).
@@ -209,7 +219,7 @@ double deltaYL = 0.0, deltaYR = 0.0;   // y_cmd의 y_d(t) 대비 순응 변위 (
 // 15cm box Mission 7에서는 오른팔이 30mm에서 약 6.5N으로 포화되어 gate 확보를 위해 40mm로 확대.
 // 속도 리밋(0.03m/s)은 그대로 유지 - 발산 방지는 변위가 아니라 속도 쪽이 핵심이었음(1차 검증).
 const double Y_CMD_MAX_DISP = 0.04;   // 15 cm box 실측: 우측 30mm에서 6.5N 포화 -> 7.5N gate 확보를 위해 40mm
-const double Y_CMD_VEL_LIMIT = 0.03;  // deltaY 최대 속도 [m/s] (기존 APPROACH_CONTACT_V_DES와 동일한 완만한 접촉 속도)
+const double Y_CMD_VEL_LIMIT = 0.01;  // Mission 8: 접촉력 overshoot를 줄이기 위한 완만한 압착 속도
 
 // 매 tick IK 웜스타트 + 관절 속도/가속도 후진차분용 (온라인 계산이라 중심차분 대신 후진차분 사용)
 VectorXd q_cmd_prev     = VectorXd::Zero(DoF);

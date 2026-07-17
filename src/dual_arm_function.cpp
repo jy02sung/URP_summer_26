@@ -208,8 +208,10 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
     const double step   = 1.0;    // 스텝 스케일 (= K·Δt 개념, 발산하면 줄이기)
     // 위치 태스크의 여유 자유도로 elbow-down 자세를 부드럽게 선호한다.
     // Damped projector는 완전한 직교 투영이 아니므로 큰 자세 gain은 위치 태스크로 샌다.
-    // 15DoF GUI 시험에서 0.1은 약 9.4 mm, 0.01은 약 3.0 mm 잔차를 남겨 0.001로 낮춘다.
+    // 15DoF GUI 시험에서 0.1은 약 9.4 mm, 0.01은 약 3.0 mm 잔차를 남겨 기본값은 0.001로 낮춘다.
     const double posture_gain = 0.001;
+    const double shoulder_roll_gain = 0.03;
+    const double shoulder_yaw_gain = 0.03;
 
     VectorXd q = q_seed;
 
@@ -220,8 +222,8 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
     // 0으로 마스킹한다(관여 안 하는데도 (I-J⁺J)의 대각항이 1이라 그대로 두면 Head가 원치 않게
     // 끌려간다).
     VectorXd q_pref = VectorXd::Zero(DoF);
-    q_pref(3) = 0.80;  q_pref(4) =  0.55; q_pref(5) = -0.20; q_pref(6)  = -0.45;  // L arm
-    q_pref(9) = 0.80; q_pref(10) = -0.55; q_pref(11) = 0.20; q_pref(12) = -0.45;  // R arm
+    q_pref(3) = 0.80;  q_pref(4) = -0.345; q_pref(5) =  0.45; q_pref(6)  = -0.45;  // L: inward roll, elbow outward
+    q_pref(9) = 0.80; q_pref(10) =  0.345; q_pref(11) = -0.45; q_pref(12) = -0.45;  // R: inward roll, elbow outward
 
     for (int iter = 0; iter < maxIter; ++iter)
     {
@@ -256,6 +258,10 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
         // Null-space 자세 항도 팔에만 허용한다.
         MatrixXd N = MatrixXd::Identity(model.nv, model.nv) - Jpinv * J;
         VectorXd postureErr = posture_gain * (q_pref - q);
+        postureErr(4)  = shoulder_roll_gain * (q_pref(4)  - q(4));
+        postureErr(10) = shoulder_roll_gain * (q_pref(10) - q(10));
+        postureErr(5)  = shoulder_yaw_gain * (q_pref(5)  - q(5));
+        postureErr(11) = shoulder_yaw_gain * (q_pref(11) - q(11));
         postureErr.head<3>().setZero();
         dq += N * postureErr;
 
