@@ -193,8 +193,8 @@ double Ka_right[3] = { 500.0, 0.0, 500.0 };
 // 서로를 향해 조이므로, F/T가 world frame으로 변환된 뒤의 부호는 팔마다 반대다 - 2026-07-13 Gazebo
 // 실측(PHASE_APPROACH 구간, 어드미턴스 미개입 순수 위치유지 스퀴즈)으로 확인:
 // F_ext_L(y) 평균 +5.4N(양수), F_ext_R(y) 평균 -3.4N(음수). 그래서 목표값도 팔마다 부호를 맞춘다.
-const double ADMITTANCE_FD_Y_LEFT  =  4.0;
-const double ADMITTANCE_FD_Y_RIGHT = -4.0;
+const double ADMITTANCE_FD_Y_LEFT  =  10.0;
+const double ADMITTANCE_FD_Y_RIGHT = -10.0;
 
 // 어드미턴스 command 적분 상태 (tick 간 유지). PHASE_GRASP_TO_PLACE 진입 순간 실제 EE 위치로
 // 초기화되고(admittance_initialized), 그 밖에서는 다음 진입에 대비해 리셋된다 (main.cpp).

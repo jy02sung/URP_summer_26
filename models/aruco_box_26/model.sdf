@@ -7,7 +7,7 @@
     <static>false</static>
     <link name="link">
       <inertial>
-        <mass>0.2</mass>
+        <mass>0.5</mass>
         <!-- solid cube, side 0.15m: ixx=iyy=izz = (1/6)*m*s^2 -->
         <inertia>
           <ixx>0.000750</ixx>
