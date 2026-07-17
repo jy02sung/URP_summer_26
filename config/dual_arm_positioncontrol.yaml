@@ -57,3 +57,11 @@ dual_arm:
     type: position_controllers/JointPositionController
     joint: R_wrist_yaw_joint
     pid: {p: 40.0, i: 0.0, d: 8.0}
+  joint14_position_controller:
+    type: position_controllers/JointPositionController
+    joint: L_wrist_pitch_joint
+    pid: {p: 40.0, i: 0.0, d: 8.0}
+  joint15_position_controller:
+    type: position_controllers/JointPositionController
+    joint: R_wrist_pitch_joint
+    pid: {p: 40.0, i: 0.0, d: 8.0}
