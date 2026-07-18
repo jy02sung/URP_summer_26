@@ -4,12 +4,11 @@
 
   <world name="default">
     <gravity>0 0 -9.8</gravity>
-    <!-- The torque controller runs in a separate ROS process.  Keep simulation time
-         slower than wall time so its 1 kHz feedback loop cannot fall behind Gazebo
-         and apply stale, opposite-sign damping torques. -->
+    <!-- 1 ms physics step at 1000 updates/s gives a 1.0 real-time target.  Startup
+         holding runs inside gazebo_ros_control, so it remains synchronized at this rate. -->
     <physics name="slow_realtime_control" type="ode">
       <max_step_size>0.001</max_step_size>
-      <real_time_update_rate>200</real_time_update_rate>
+      <real_time_update_rate>1000</real_time_update_rate>
     </physics>
     <include>
       <uri>model://ground_plane</uri>
