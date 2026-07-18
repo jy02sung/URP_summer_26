@@ -74,25 +74,23 @@
     </model>
 
     <!-- ============================================================================
-         transport_fan_table (6차 수정, 2026-07-18): 사용자가 ㄷ자 + 평평한 상판(5차)은 마음에
-         든다고 확인하고, 순수 배치/디자인만 두 가지 추가 요청함 - (1) 테이블을 로봇 쪽으로
-         당겨서 로봇이 ㄷ자 파인 공간 안쪽에 들어가도록, (2) 얇은 원기둥 다리 대신 바닥부터
-         상판까지 꽉 찬 원목 패널(카운터/인포데스크 느낌)로. 물체 spawn 좌표/궤적/충돌 안전마진
-         재계산은 사용자가 직접 하겠다고 명시해서 이번 수정에서는 손대지 않음 - 순수 배치+디자인만.
+         transport_fan_table (7차 수정, 2026-07-18): 사용자가 스크린샷으로 직접 확인 - 6차
+         버전은 막힌 벽(구 front_wall)이 로봇을 마주보는 가까운 쪽에 있어서, 로봇이 ㄷ자 안쪽이
+         아니라 막힌 벽 앞에 서서 팔이 나무 패널을 그대로 뚫고 들어가는 상태였음(스크린샷으로
+         직접 확인됨).
 
-         배치: 5차 형상(front_wall u=0.46~0.64, left/right_arm u=0.46~0.95, 로컬 u=반지름
-         방향/v=접선 방향, 전체가 place 방향 +80deg로 회전된 좌표계)을 그대로 유지한 채, 세
-         조각의 u범위를 전부 -0.28m 평행이동(SHIFT=0.28) - 로봇에 가장 가까운 지점이
-         0.46m->0.18m로 당겨짐. 각도(회전)나 폭은 전혀 안 바꿈, 순수 위치 이동만.
-         주의: 정확한 로봇 몸통(Pelvis/Torso mesh) 반경이나 다리/발(L_toe 등) 위치를 URDF
-         메시 파일에서 직접 재보진 않았음(사용자가 물체/충돌 계산은 직접 하겠다고 해서) - 0.18m는
-         "확실히 안 닿는 최소값"이 아니라 "많이 당겨진 값" 정도로 봐주시고, 실제로 몸통이나
-         다리에 파고드는 것처럼 보이면 이 SHIFT 값만 조정하면 됨.
+         해결: "패널 형태/재질/치수(design)는 그대로 두고 위치·방향만" 지침에 따라, 모델 전체를
+         180도 돌리는 대신(그러면 place 지점이 있는 +80deg 방향 자체를 벗어나 버림) 같은 로컬
+         좌표계(+80deg로 회전된 u=반지름/v=접선) 안에서 막힌 벽(이름을 front_wall->back_wall로
+         변경, 크기 0.18x1.10x0.08m는 완전히 그대로) 하나만 안쪽 끝(u=0.18~0.36)에서 바깥쪽 끝
+         (u=0.43~0.61)으로 옮겼다. left_arm/right_arm(치수 그대로, 0.49x0.20x0.08m)은 안쪽
+         끝(u=0.12)부터 바깥쪽까지 그대로 뻗어 있어, 결과적으로 u=0.12~0.43, v=-0.35~0.35
+         구간이 완전히 비어(ㄷ자가 로봇을 향해 열려 있음) 로봇이 그 빈 공간을 마주보고 서게
+         된다. 추가로 안쪽 진입부를 0.18m->0.12m로 6cm 더 당겨 "쏙 들어가 선" 느낌을 강화했다.
 
-         하부 구조: 다리 4개(원기둥)를 전부 제거하고, 위 3개 상판 조각 각각과 정확히 같은
-         (u,v) 풋프린트를 갖는 "패널" Box를 바닥(z=0)부터 상판 바닥면(z=1.12)까지 꽉 채워
-         추가 - front_wall_panel/left_arm_panel/right_arm_panel. 재질은 상판과 동일한
-         Gazebo/Wood.
+         물체 spawn 좌표/궤적/충돌 안전마진 재계산은 여전히 사용자가 직접 맡기로 한 부분이라
+         이번에도 손대지 않음(place 지점이 이제 back_wall 범위를 벗어날 수 있는데, 이건 이번
+         수정 범위 밖이라 언급만 하고 그대로 둠).
 
          main.cpp/urdf 등 제어 로직은 이번에도 전혀 건드리지 않음 - 순수 world 파일 시각적
          모델링. 실행 시 반드시 `source /home/jungmin/friend_ws_88pct/devel/setup.bash`를
@@ -102,18 +100,18 @@
       <static>true</static>
       <pose>0 0 0 0 0 1.3962634</pose>
       <link name="link">
-        <collision name="front_wall_collision"><pose>0.2700 0.0000 1.1600 0 0 0</pose><geometry><box><size>0.1800 1.1000 0.08</size></box></geometry></collision>
-        <visual name="front_wall_visual"><pose>0.2700 0.0000 1.1600 0 0 0</pose><geometry><box><size>0.1800 1.1000 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="front_wall_panel_collision"><pose>0.2700 0.0000 0.5600 0 0 0</pose><geometry><box><size>0.1800 1.1000 1.1200</size></box></geometry></collision>
-        <visual name="front_wall_panel_visual"><pose>0.2700 0.0000 0.5600 0 0 0</pose><geometry><box><size>0.1800 1.1000 1.1200</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="left_arm_collision"><pose>0.4250 -0.4500 1.1600 0 0 0</pose><geometry><box><size>0.4900 0.2000 0.08</size></box></geometry></collision>
-        <visual name="left_arm_visual"><pose>0.4250 -0.4500 1.1600 0 0 0</pose><geometry><box><size>0.4900 0.2000 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="left_arm_panel_collision"><pose>0.4250 -0.4500 0.5600 0 0 0</pose><geometry><box><size>0.4900 0.2000 1.1200</size></box></geometry></collision>
-        <visual name="left_arm_panel_visual"><pose>0.4250 -0.4500 0.5600 0 0 0</pose><geometry><box><size>0.4900 0.2000 1.1200</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="right_arm_collision"><pose>0.4250 0.4500 1.1600 0 0 0</pose><geometry><box><size>0.4900 0.2000 0.08</size></box></geometry></collision>
-        <visual name="right_arm_visual"><pose>0.4250 0.4500 1.1600 0 0 0</pose><geometry><box><size>0.4900 0.2000 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="right_arm_panel_collision"><pose>0.4250 0.4500 0.5600 0 0 0</pose><geometry><box><size>0.4900 0.2000 1.1200</size></box></geometry></collision>
-        <visual name="right_arm_panel_visual"><pose>0.4250 0.4500 0.5600 0 0 0</pose><geometry><box><size>0.4900 0.2000 1.1200</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="back_wall_collision"><pose>0.5200 0.0000 1.1600 0 0 0</pose><geometry><box><size>0.1800 1.1000 0.08</size></box></geometry></collision>
+        <visual name="back_wall_visual"><pose>0.5200 0.0000 1.1600 0 0 0</pose><geometry><box><size>0.1800 1.1000 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="back_wall_panel_collision"><pose>0.5200 0.0000 0.5600 0 0 0</pose><geometry><box><size>0.1800 1.1000 1.1200</size></box></geometry></collision>
+        <visual name="back_wall_panel_visual"><pose>0.5200 0.0000 0.5600 0 0 0</pose><geometry><box><size>0.1800 1.1000 1.1200</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="left_arm_collision"><pose>0.3650 -0.4500 1.1600 0 0 0</pose><geometry><box><size>0.4900 0.2000 0.08</size></box></geometry></collision>
+        <visual name="left_arm_visual"><pose>0.3650 -0.4500 1.1600 0 0 0</pose><geometry><box><size>0.4900 0.2000 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="left_arm_panel_collision"><pose>0.3650 -0.4500 0.5600 0 0 0</pose><geometry><box><size>0.4900 0.2000 1.1200</size></box></geometry></collision>
+        <visual name="left_arm_panel_visual"><pose>0.3650 -0.4500 0.5600 0 0 0</pose><geometry><box><size>0.4900 0.2000 1.1200</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="right_arm_collision"><pose>0.3650 0.4500 1.1600 0 0 0</pose><geometry><box><size>0.4900 0.2000 0.08</size></box></geometry></collision>
+        <visual name="right_arm_visual"><pose>0.3650 0.4500 1.1600 0 0 0</pose><geometry><box><size>0.4900 0.2000 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="right_arm_panel_collision"><pose>0.3650 0.4500 0.5600 0 0 0</pose><geometry><box><size>0.4900 0.2000 1.1200</size></box></geometry></collision>
+        <visual name="right_arm_panel_visual"><pose>0.3650 0.4500 0.5600 0 0 0</pose><geometry><box><size>0.4900 0.2000 1.1200</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
       </link>
     </model>
 
