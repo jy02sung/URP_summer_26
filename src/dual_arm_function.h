@@ -35,9 +35,10 @@ using namespace Eigen;
 // 전역 변수 선언
 const double deg2rad = M_PI / 180;
 const double rad2deg = 180 / M_PI;
-const int DoF = 11;
+const int DoF = 15;
 // DoF 배열 순서(Pinocchio model.nq 순서와 동일해야 함, urdf 트리 순회 결과로 실측 확인됨):
-// 0:Waist 1:Head_yaw 2:Head_pitch 3:L_sp 4:L_sr 5:L_sy 6:L_e 7:R_sp 8:R_sr 9:R_sy 10:R_e
+// 0:Waist 1:Head_yaw 2:Head_pitch 3:L_sp 4:L_sr 5:L_sy 6:L_e 7:L_wy 8:L_wp
+// 9:R_sp 10:R_sr 11:R_sy 12:R_e 13:R_wy 14:R_wp
 const double SAMPLING_TIME = 0.001;
 const double SAMPLING_TIME_TRAJ = 0.001;
 
@@ -69,12 +70,12 @@ double waist_torque[1] = {0};
 double head_jointp[2] = {0,};   // [0]=yaw, [1]=pitch
 double head_jointv[2] = {0,};
 double head_torque[2] = {0,};
-double left_arm_jointp[4] = {0,};
-double left_arm_jointv[4] = {0,};
-double left_arm_torque[4] = {0,};
-double right_arm_jointp[4] = {0,};
-double right_arm_jointv[4] = {0,};
-double right_arm_torque[4] = {0,};
+double left_arm_jointp[6] = {0,};
+double left_arm_jointv[6] = {0,};
+double left_arm_torque[6] = {0,};
+double right_arm_jointp[6] = {0,};
+double right_arm_jointv[6] = {0,};
+double right_arm_torque[6] = {0,};
 
 double dual_arm_jointp[DoF] = {0,};
 double dual_arm_jointv[DoF] = {0,};
@@ -103,10 +104,12 @@ MatrixXd dual_arm_jointa_trajectory = MatrixXd::Zero(1,DoF);
 // double Kp[DoF] = { 1000, 500, 350, 50, 100, 500, 350, 50, 100 }; //이거 사용
 // double Kd[DoF] = { 10, 3, 1.5, 0.5, 1, 3, 1.5, 0.5, 1 };
 
-// 순서: Waist, Head_yaw, Head_pitch, L_sp,L_sr,L_sy,L_e, R_sp,R_sr,R_sy,R_e
-// head 게인은 초기값(관성이 작아 팔보다 낮게 시작) - 실제 거동 보고 재튜닝 필요
-double Kp[DoF] = { 1000, 500, 500, 500, 500, 500, 500, 500, 500, 500, 500 };
-double Kd[DoF] = { 50,   30,  30,  1,   1,   1,   1,   1,   1,   1,   1   };
+// 순서: Waist, Head_yaw, Head_pitch, L_sp,L_sr,L_sy,L_e,L_wy,L_wp,
+//       R_sp,R_sr,R_sy,R_e,R_wy,R_wp
+// 순서: Waist, Head_yaw, Head_pitch, L_sp,L_sr,L_sy,L_e,L_wy,L_wp,
+//       R_sp,R_sr,R_sy,R_e,R_wy,R_wp
+double Kp[DoF] = { 1000, 500, 500, 160, 160, 160, 160, 40, 40, 160, 160, 160, 160, 40, 40 };
+double Kd[DoF] = { 50,   30,  30,  25,  25,  25,  25,  8,  8,  25,  25,  25,  25,  8,  8  };
 
 double PD_torque[DoF] = {0, };
 double PD_acc[DoF] = {0, };

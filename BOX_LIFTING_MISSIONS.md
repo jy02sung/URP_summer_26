@@ -289,11 +289,30 @@ Result: NaN, 진동, self-collision 및 joint-limit jump 없음
 
 ### 통과 조건
 
-- [ ] 15개 controller 로드 성공
-- [ ] `/dual_arm/joint_states`에 wrist joint 포함
-- [ ] 모든 joint 값 유한
-- [ ] waist, arms, head가 시작 자세를 유지
-- [ ] wrist 0 rad hold 성공
+- [x] 15개 controller 로드 성공
+- [x] `/dual_arm/joint_states`에 wrist joint 포함
+- [x] 모든 joint 값 유한
+- [x] waist, arms, head가 시작 자세를 유지
+- [x] wrist 0 rad hold 성공
+
+### 결과 기록
+
+```text
+Date: 2026-07-19 (X-Z wrist redesign)
+Transmission/controller order: waist, left arm 6, right arm 6, head yaw/pitch
+Pinocchio order: waist, head yaw/pitch, left arm 6, right arm 6
+State mapping: /dual_arm/joint_states의 배열 위치 대신 joint name 기반으로 Pinocchio index에 매핑
+Runtime assertion: Pinocchio nq=15, nv=15 및 각 q index/name 출력
+Controllers: joint_state_controller + effort-interface JointPositionController 15개 running
+Joint states: 15개 이름 수신, position/velocity 모두 finite
+Control law: 적분항 없는 PD, arm P=1.0/D=0.2, X-Z wrist P=0.5/D=0.1
+Startup: Gazebo paused, 관절 15개 0 rad 설정, controller 로드 후 1배속 unpause
+Rejected test: 외부 RNEA/effort 즉시 시작은 좌우 결합 진동과 관절 한계 충돌을 재현해 제외
+30 s hold: 15 joint finite, 최대 |속도|=0.01435 rad/s(초기 Head yaw), 양손목 속도 <3.4e-5 rad/s
+Static sag: head pitch 0.251 rad, shoulder 0.05~0.08 rad; 진동 없는 무적분 PD의 정상상태 오차
+Flexion tracking: 좌우 +0.30 rad 명령에 약 +0.260 rad, -0.30 rad에 약 -0.263/-0.260 rad로 무진동 수렴
+Neutral return after 8 s: L=-0.00189 rad, R=-0.00273 rad
+```
 
 ---
 

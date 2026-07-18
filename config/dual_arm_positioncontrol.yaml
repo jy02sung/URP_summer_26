@@ -1,51 +1,22 @@
 dual_arm:
-  # Publish all joint states -----------------------------------
   joint_state_controller:
     type: joint_state_controller/JointStateController
-    publish_rate: 1000  # 50
-  
-  # Position Controllers ---------------------------------------
-  joint1_position_controller:
-    type: position_controllers/JointPositionController 
-    joint: Waist_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint2_position_controller:
-    type: position_controllers/JointPositionController
-    joint: L_shoulder_pitch_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint3_position_controller:
-    type: position_controllers/JointPositionController
-    joint: L_shoulder_roll_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint4_position_controller:
-    type: position_controllers/JointPositionController
-    joint: L_shoulder_yaw_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint5_position_controller:
-    type: position_controllers/JointPositionController
-    joint: L_elbow_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint6_position_controller:
-    type: position_controllers/JointPositionController
-    joint: R_shoulder_pitch_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint7_position_controller:
-    type: position_controllers/JointPositionController
-    joint: R_shoulder_roll_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint8_position_controller:
-    type: position_controllers/JointPositionController
-    joint: R_shoulder_yaw_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint9_position_controller:
-    type: position_controllers/JointPositionController
-    joint: R_elbow_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint10_position_controller:
-    type: position_controllers/JointPositionController
-    joint: Head_yaw_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
-  joint11_position_controller:
-    type: position_controllers/JointPositionController
-    joint: Head_pitch_joint
-    pid: {p: 100.0, i: 0.01, d: 10.0}
+    publish_rate: 1000
+
+  # Mission 3: effort interface 위에서 동작하는 PD position controller.
+  # 적분항은 사용하지 않으며 새 X축 손목은 가장 낮은 대역폭으로 시작한다.
+  joint1_position_controller:  {type: effort_controllers/JointPositionController, joint: Waist_joint,            pid: {p: 5.0, i: 0.0, d: 1.0}}
+  joint2_position_controller:  {type: effort_controllers/JointPositionController, joint: L_shoulder_pitch_joint, pid: {p: 1.0, i: 0.0, d: 0.2}}
+  joint3_position_controller:  {type: effort_controllers/JointPositionController, joint: L_shoulder_roll_joint,  pid: {p: 1.0, i: 0.0, d: 0.2}}
+  joint4_position_controller:  {type: effort_controllers/JointPositionController, joint: L_shoulder_yaw_joint,   pid: {p: 1.0, i: 0.0, d: 0.2}}
+  joint5_position_controller:  {type: effort_controllers/JointPositionController, joint: L_elbow_joint,          pid: {p: 1.0, i: 0.0, d: 0.2}}
+  joint6_position_controller:  {type: effort_controllers/JointPositionController, joint: L_wrist_yaw_joint,      pid: {p: 0.5, i: 0.0, d: 0.1}}
+  joint7_position_controller:  {type: effort_controllers/JointPositionController, joint: L_wrist_pitch_joint,    pid: {p: 0.5, i: 0.0, d: 0.1}}
+  joint8_position_controller:  {type: effort_controllers/JointPositionController, joint: R_shoulder_pitch_joint, pid: {p: 1.0, i: 0.0, d: 0.2}}
+  joint9_position_controller:  {type: effort_controllers/JointPositionController, joint: R_shoulder_roll_joint,  pid: {p: 1.0, i: 0.0, d: 0.2}}
+  joint10_position_controller: {type: effort_controllers/JointPositionController, joint: R_shoulder_yaw_joint,   pid: {p: 1.0, i: 0.0, d: 0.2}}
+  joint11_position_controller: {type: effort_controllers/JointPositionController, joint: R_elbow_joint,          pid: {p: 1.0, i: 0.0, d: 0.2}}
+  joint12_position_controller: {type: effort_controllers/JointPositionController, joint: R_wrist_yaw_joint,      pid: {p: 0.5, i: 0.0, d: 0.1}}
+  joint13_position_controller: {type: effort_controllers/JointPositionController, joint: R_wrist_pitch_joint,    pid: {p: 0.5, i: 0.0, d: 0.1}}
+  joint14_position_controller: {type: effort_controllers/JointPositionController, joint: Head_yaw_joint,         pid: {p: 1.0, i: 0.0, d: 0.2}}
+  joint15_position_controller: {type: effort_controllers/JointPositionController, joint: Head_pitch_joint,       pid: {p: 1.0, i: 0.0, d: 0.2}}

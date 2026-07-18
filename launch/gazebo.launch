@@ -1,6 +1,6 @@
 <launch>
   <!-- these are the arguments you can pass this launch file, for example paused:=true -->
-  <arg name="paused" default="false"/>
+  <arg name="paused" default="true"/>
   <arg name="use_sim_time" default="true"/>
   <arg name="gui" default="true"/>
   <arg name="headless" default="false"/>
@@ -31,13 +31,17 @@
       -J L_shoulder_roll_joint 0
       -J L_shoulder_yaw_joint 0
       -J L_elbow_joint 0
+      -J L_wrist_yaw_joint 0
+      -J L_wrist_pitch_joint 0
       -J R_shoulder_pitch_joint 0
       -J R_shoulder_roll_joint 0
       -J R_shoulder_yaw_joint 0
       -J R_elbow_joint 0
+      -J R_wrist_yaw_joint 0
+      -J R_wrist_pitch_joint 0
       -J Head_yaw_joint 0
       -J Head_pitch_joint 0"/>
   
-  <node pkg="dual_arm" type="dual_arm_main" name="main" output="screen"/>
+  <!-- Mission 3 intentionally excludes IK/grasp dynamics while tuning 15DoF PD hold. -->
 
 </launch>
