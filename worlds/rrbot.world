@@ -3,6 +3,14 @@
   <!-- We use a custom world for the rrbot so that the camera angle is launched correctly -->
 
   <world name="default">
+    <gravity>0 0 -9.8</gravity>
+    <!-- The torque controller runs in a separate ROS process.  Keep simulation time
+         slower than wall time so its 1 kHz feedback loop cannot fall behind Gazebo
+         and apply stale, opposite-sign damping torques. -->
+    <physics name="slow_realtime_control" type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_update_rate>200</real_time_update_rate>
+    </physics>
     <include>
       <uri>model://ground_plane</uri>
     </include>

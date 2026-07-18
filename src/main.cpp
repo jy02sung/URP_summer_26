@@ -46,6 +46,7 @@ const string PLACE_INDICATOR_SDF = R"(
 // ArUco 인식 결과 (aruco_ros/single) - 카메라 광학 프레임 기준 pose
 geometry_msgs::PoseStamped aruco_pose_cam;
 bool aruco_pose_received = false;
+bool joint_state_received = false;
 unsigned long aruco_pose_seq = 0;   // 콜백마다 증가. Head 스캔 중 "새 프레임 도착"을 감지하기 위한 시퀀스 번호
                                      // (aruco_pose_cam 값 자체는 새 메시지가 올 때까지 안 바뀌므로 값만 봐서는 새 프레임인지 알 수 없음)
 
@@ -100,6 +101,7 @@ void msgCallbackJointState(const sensor_msgs::JointState::ConstPtr& msg)
         if (i < msg->position.size()) dual_arm_jointp[k] = msg->position[i];
         if (i < msg->velocity.size()) dual_arm_jointv[k] = msg->velocity[i];
     }
+    joint_state_received = true;
 }
 
 // F/T 센서 콜백 (임피던스 제어의 F_ext로 사용)
@@ -546,8 +548,30 @@ int main(int argc, char **argv)
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    // Gazebo가 실제로 스폰한 관절 상태를 첫 idle 유지 목표로 사용한다. 특히 팔꿈치를
+    // 90도로 굽혀 스폰했을 때 기존의 0행 궤적이 즉시 팔을 펴는 명령으로 바뀌는 것을 막는다.
+    // 첫 joint-state 전에도 아래 스폰 자세로 중력보상 명령을 미리 발행해, 컨트롤러가
+    // 시작되는 첫 물리 tick부터 팔꿈치가 풀리지 않게 한다.
+    dual_arm_jointp_trajectory.resize(1, DoF);
+    dual_arm_jointv_trajectory.setZero(1, DoF);
+    dual_arm_jointa_trajectory.setZero(1, DoF);
+    dual_arm_phase_trajectory.setConstant(1, PHASE_APPROACH);
+    for (int i = 0; i < DoF; ++i) {
+        dual_arm_jointp_trajectory(0, i) = dual_arm_jointp[i];
+        dual_arm_targetp[i] = dual_arm_jointp[i];
+        dual_arm_targetv[i] = 0.0;
+    }
+    traj_cnt = 1;
+    bool startup_pose_latched = false;
+    bool startup_hold_active = true;
+
     while(ros::ok())
     {
+
+        if (joint_state_received && !startup_pose_latched) {
+            startup_pose_latched = true;
+            ROS_INFO("Joint states received; holding the explicit zero startup pose.");
+        }
 
         for (int i = 0; i < DoF; i++){
             dual_arm_jointv_lpf[i] = dualarm.LowPassFilter(dual_arm_jointv[i], dual_arm_jointv_before[i], 10);
@@ -560,6 +584,7 @@ int main(int argc, char **argv)
 
 
         if(callback == true){
+            startup_hold_active = false;
             bool new_trajectory_built = true;  // command_mode==3이 실패하면 false로 바뀌어 기존 궤적 재생을 유지
 
             // 현재 관절각을 initp(궤적 시작점) 및 IK 시드로 저장
@@ -1011,7 +1036,7 @@ int main(int argc, char **argv)
         }
 
         const int wrist_index[4] = {7, 8, 13, 14};
-        for (int k = 0; k < 4; ++k) {
+        for (int k = 0; !startup_hold_active && k < 4; ++k) {
             const int i = wrist_index[k];
             const double q = dual_arm_jointp[i], dq = dual_arm_jointv[i];
             double lower = -WRIST_ABS_LIMIT, upper = WRIST_ABS_LIMIT;
@@ -1085,6 +1110,15 @@ int main(int argc, char **argv)
             dual_arm_targetp_vec(i) = dual_arm_targetp[i];
         }
 
+        // Startup 오차나 접촉 구속이 PD 가속도를 비현실적인 RNEA 토크로 증폭하지
+        // 않도록 최종 목표 가속도에 관절군별 안전 상한을 적용한다.
+        for (int i = 0; i < DoF; ++i) {
+            double limit = 20.0;  // waist, head, wrist [rad/s^2]
+            if ((i >= 3 && i <= 6) || (i >= 9 && i <= 12))
+                limit = 40.0;     // shoulder, elbow [rad/s^2]
+            dual_arm_targeta_vec(i) = std::min(std::max(dual_arm_targeta_vec(i), -limit), limit);
+        }
+
         // 어드미턴스 제어는 위 PHASE_GRASP_TO_PLACE 분기 안에서 이미 dual_arm_targetp/targetv/targeta를
         // q_cmd/q_cmd_dot/q_cmd_ddot로 직접 채웠으므로, 여기서는 그 값 그대로 RNEA에 넘기기만 하면 된다
         // (예전 임피던스처럼 토크 레벨에서 별도로 더해줄 필요 없음).
@@ -1098,7 +1132,23 @@ int main(int argc, char **argv)
         // dynamic_torque = pinocchio::rnea(model, data, dual_arm_jointp_vec, dual_arm_jointv_lpf_vec, dual_arm_targeta_vec);
 
         for (int i = 0; i < DoF; i++) {
-            target_torque[i] = dynamic_torque(i);
+            if (startup_hold_active) {
+                // 정지 진단에서는 trajectory/IK/손목 순응을 모두 배제한다. 모델 관성행렬을
+                // 통한 가속도 제어 대신 중력보상과 제한된 토크 PD만 사용해 15DoF plant와
+                // effort interface 자체가 안정적인지 먼저 검증한다.
+                double kp = 10.0, kd = 5.0, torque_limit = 30.0;
+                if (i <= 2) { kp = 5.0; kd = 2.0; torque_limit = 20.0; }
+                if (i == 0) { kp = 10.0; kd = 5.0; torque_limit = 30.0; }
+                if (i == 7 || i == 8 || i == 13 || i == 14) {
+                    kp = 2.0; kd = 1.0; torque_limit = 4.0;
+                }
+                const double tau_pd = kp * (dual_arm_targetp[i] - dual_arm_jointp[i])
+                                    - kd * dual_arm_jointv[i];
+                target_torque[i] = std::min(std::max(tau_pd,
+                                                     -torque_limit), torque_limit);
+            } else {
+                target_torque[i] = dynamic_torque(i);
+            }
         }
 
         // for(int i = 0; i < DoF; i++){
@@ -1195,7 +1245,11 @@ int main(int argc, char **argv)
         //cout << "Position: " << data.oMf[r_EE].translation().transpose() << endl;
         //cout << "Orientation (Rotation Matrix):\n" << data.oMf[r_EE].rotation() << endl;     
 
-        loop_rate.sleep();
+        // Gazebo가 paused인 시작 구간에는 simulation time이 흐르지 않는다. 이때도 아직
+        // 로드 중인 effort controller가 구독을 시작하는 즉시 초기 중력보상 명령을 받을 수
+        // 있도록 wall-clock으로 반복한다. 첫 joint-state 이후에는 원래의 sim-time 1 kHz로 복귀한다.
+        if (joint_state_received) loop_rate.sleep();
+        else ros::WallDuration(0.001).sleep();
         ros::spinOnce();
     }
     

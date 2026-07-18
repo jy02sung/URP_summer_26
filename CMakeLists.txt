@@ -14,11 +14,15 @@ find_package(catkin REQUIRED COMPONENTS
   gazebo_msgs
 )
 
-
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES dual_arm
  CATKIN_DEPENDS roscpp rospy roslib std_msgs tf geometry_msgs gazebo_msgs
+)
+
+catkin_install_python(PROGRAMS
+  scripts/unpause_when_controllers_ready.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
 
