@@ -38,20 +38,27 @@
          SCAN_CHECK 분기), 이론상 FOV 여유(±30deg)가 있어 보여도 실제로는 -29deg가 안 됨.
          카메라 시야 경계에서 "이 정도면 되겠지"로 미세조정하는 건 매번 30초+ 걸리는 실제 Gazebo
          재현이 필요해 위험이 커서, pick 좌표를 원래 검증된 값(0.45,-0.15, -18.4deg)으로 완전히
-         되돌림(z도 원래 1.225 그대로, 아무것도 안 바꿈) - 이 좌표는 프로젝트 히스토리 전체에서
-         수십 회 반복 검증된 값이라 탐지 실패 위험이 없음. place는 이전과 동일(0.0823,0.4668,
-         +80deg, 반지름 0.474m, waist 하드리밋 직전) - 실측 waist swing 61.6deg로 낮아짐
-         (68.8deg에서 하락, pick의 waist 기여분이 줄어든 만큼). -->
+         되돌림 - 이 좌표는 프로젝트 히스토리 전체에서 수십 회 반복 검증된 값이라 탐지 실패
+         위험이 없음. place는 이전과 동일(0.0823,0.4668, +80deg, 반지름 0.474m, waist
+         하드리밋 직전) - 실측 waist swing 61.6deg로 낮아짐(68.8deg에서 하락, pick의 waist
+         기여분이 줄어든 만큼).
+
+         2026-07-18 (10차): pick_pedestal 주석 처리 + transport_fan_table을 x=0.665로 이동
+         시키면서, 물체가 "테이블 위"에 있도록 z만 1.225->1.075로 낮춤(상판 높이 1.0 + 물체
+         반높이 0.075). x=0.45,y=-0.15는 waist swing 61.6deg 계산의 근거가 된 lock된 값이라
+         그대로 둠 - 주의: 새 상판 X범위가 [0.365,0.965]라 물체 앞쪽 모서리(x=0.375)가 상판
+         안쪽 경계(x=0.365)에서 1cm 여유밖에 없음. 좌표를 옮기지 않는 한 이 마진은 그대로임 -
+         테이블을 조금 더 이동하거나 좌표를 조정할지는 사용자 판단 필요. -->
     <include>
       <uri>model://aruco_box_26</uri>
       <name>aruco_box_26</name>
-      <pose>0.45 -0.15 1.225 0 0 0</pose>
+      <pose>0.45 -0.15 1.075 0 0 0</pose>
     </include>
 
-    <!-- pick 지점 전용 소형 받침대(원본 그대로 복원): 물체 발판(15x15cm)보다 살짝 큰 17x17cm,
-         상판 z=1.15. 파지 전(LOCATE+APPROACH) 동안만 물체를 떠받치는 용도 - 팔은 물체 바로
-         위/옆으로만 접근하므로 이 작은 받침대와 충돌할 일이 없다(프로젝트 히스토리 전체에서
-         검증됨). 새 pick 좌표가 다시 이 자리와 정확히 일치하므로 그대로 복원. -->
+    <!-- pick_pedestal 주석 처리 (10차 수정, 2026-07-18): transport_fan_table 하나로 통합되면서
+         "기존 받침대"(이 모델)는 더 이상 필요 없다는 사용자 판단으로 비활성화. 물리엔진에는
+         전혀 로드되지 않으므로 pick 지점 하중 지지는 이제 transport_fan_table 상판이 전담한다.
+         나중에 되돌릴 수 있게 삭제 대신 주석 처리로 보존.
     <model name="pick_pedestal">
       <static>true</static>
       <pose>0.45 -0.15 1.10 0 0 0</pose>
@@ -72,18 +79,12 @@
         </visual>
       </link>
     </model>
+    -->
 
     <!-- ============================================================================
-         transport_fan_table (9차 수정, 2026-07-18): 사용자가 ㄷ자 구조 자체를 렌더링/충돌
-         처리가 복잡하다는 이유로 전면 폐기 요청 - 단일 사각 상판 + 다리 4개짜리 심플한
-         테이블로 완전히 교체함. 상판 크기/중심좌표/다리 치수는 전부 사용자가 직접 계산해서
-         지정한 값 그대로 반영(상판 중심 z=0.96, 두께 0.08 -> 최고점 z=1.0 정확히 일치).
-
-         다리 X/Y 위치만 이번에 계산: 상판 X범위 [0.25,0.85], Y범위 [-0.7,0.7]에서 다리
-         두께(0.06)의 절반(0.03)만큼 안쪽으로 인셋해 상판 모서리에서 다리가 튀어나오지 않고
-         딱 맞게 배치되도록 함 -> 다리 중심 (x,y) = (0.28,-0.67),(0.28,0.67),
-         (0.82,-0.67),(0.82,0.67). 다리 z중심=0.46, 높이 0.92로 바닥(z=0)에서 상판 밑면
-         (z=0.96-0.04=0.92)까지 정확히 이어짐.
+         transport_fan_table (10차 수정, 2026-07-18): 사용자가 상판 중심을 x=0.665로 재지정
+         (y=0, z=0.96은 그대로) - 상판/다리 치수는 9차와 동일, X만 +0.115m 평행이동.
+         다리 x좌표도 같이 +0.115: 0.28->0.395, 0.82->0.935 (y, z, 크기는 9차와 동일).
 
          main.cpp/urdf 등 제어 로직은 이번에도 전혀 건드리지 않음 - 순수 world 파일 시각적
          모델링. 실행 시 반드시 `source /home/jungmin/friend_ws_88pct/devel/setup.bash`를
@@ -93,16 +94,16 @@
       <static>true</static>
       <pose>0 0 0 0 0 0</pose>
       <link name="link">
-        <collision name="top_plate_collision"><pose>0.55 0.0 0.96 0 0 0</pose><geometry><box><size>0.6 1.4 0.08</size></box></geometry></collision>
-        <visual name="top_plate_visual"><pose>0.55 0.0 0.96 0 0 0</pose><geometry><box><size>0.6 1.4 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="leg_0_collision"><pose>0.28 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
-        <visual name="leg_0_visual"><pose>0.28 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="leg_1_collision"><pose>0.28 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
-        <visual name="leg_1_visual"><pose>0.28 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="leg_2_collision"><pose>0.82 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
-        <visual name="leg_2_visual"><pose>0.82 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="leg_3_collision"><pose>0.82 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
-        <visual name="leg_3_visual"><pose>0.82 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_plate_collision"><pose>0.665 0.0 0.96 0 0 0</pose><geometry><box><size>0.6 1.4 0.08</size></box></geometry></collision>
+        <visual name="top_plate_visual"><pose>0.665 0.0 0.96 0 0 0</pose><geometry><box><size>0.6 1.4 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_0_collision"><pose>0.395 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
+        <visual name="leg_0_visual"><pose>0.395 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_1_collision"><pose>0.395 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
+        <visual name="leg_1_visual"><pose>0.395 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_2_collision"><pose>0.935 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
+        <visual name="leg_2_visual"><pose>0.935 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_3_collision"><pose>0.935 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
+        <visual name="leg_3_visual"><pose>0.935 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
       </link>
     </model>
 
