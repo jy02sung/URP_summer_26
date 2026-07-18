@@ -346,6 +346,11 @@ int main(int argc, char **argv)
     // 접촉/어드미턴스 스퀴즈축 동적 계산용 grip 프레임 (Task 1에서 원판 중심에 추가, Task 4 Step 3에서 사용)
     pinocchio::FrameIndex l_grip_EE = model.getFrameId("L_grip_frame_joint");
     pinocchio::FrameIndex r_grip_EE = model.getFrameId("R_grip_frame_joint");
+    // 그립패드 초기 방향 사전 정렬용: Wrist_yaw_joint 원점 rpy가 0이라(dual_arm.xacro) 이 조인트
+    // "프레임"의 자세 = 부모 링크(L_elbow/R_elbow)의 자세와 같음 -> 그 컬럼2(Z)가 곧 wrist_yaw
+    // 회전축의 world 방향이다.
+    pinocchio::FrameIndex l_wrist_yaw_frame = model.getFrameId("L_wrist_yaw_joint");
+    pinocchio::FrameIndex r_wrist_yaw_frame = model.getFrameId("R_wrist_yaw_joint");
 
     // ===== Head 자동 스캔: 다음 웨이포인트로 Head만 이동시키는 단일 세그먼트를 만들어 재생 준비 =====
     // 다른 관절(waist/양팔)은 scan_q에 저장된 직전 값을 그대로 유지한다.
@@ -499,6 +504,58 @@ int main(int argc, char **argv)
         const double LIFT_HEIGHT = 0.16;  // 파지 높이에서 들어올릴 여유 [m] (기존 0.10 -> 사용자 요청으로 상향)
         Vector3d liftL = objL + Vector3d(0, 0, LIFT_HEIGHT);
         Vector3d liftR = objR + Vector3d(0, 0, LIFT_HEIGHT);
+
+        // 그립패드 초기 방향 사전 정렬(사용자 요청, 2026-07-18): 기존에는 접촉 전까지 손목
+        // 목표가 항상 base_q의 손목값(정지 상태 PD가 수렴한 ~0)이라, waist가 크게 회전한
+        // 자세(예: 이번 pick bearing -27deg)에서는 팔 전체가 돌아간 만큼 패드도 함께 돌아
+        // 보여 "밀착 전까지 너무 돌아가 있다"는 문제가 있었다 - 밀착 후 정렬 자체는 문제없음
+        // (기존 접촉 컴플라이언스, Kp=40 PD + wrist_alignment_ready 그대로 유지, 안 건드림).
+        //
+        // 두 차례 폐기한 시도: (1) "waist 회전분만큼 -waist_angle로 되돌림" - R팔은 실측과
+        // 비슷했지만 L팔은 부호부터 안 맞음(L/R이 q_pref 미러 자세라 wrist_yaw축의 world 기여가
+        // 다름). (2) dual_arm.xacro 주석(그립패드 법선=EE 로컬 ∓Y) 기반으로 objL/R을 base_seed에서
+        // "바로" IK 프로브했더니 이번엔 부호는 맞았지만 크기가 실측 대비 8~13배 과다(dThetaL=34.6deg
+        // 였는데 실측 수렴은 qL=4.3deg) - 원인은 실제 파이프라인이 start->liftoff->standoff->obj
+        // 순서로 seed_vec을 이어가며 IK를 푸는데(redundant 9-DOF라 seed 경로에 따라 다른 지역해로
+        // 수렴), 프로브가 base_seed에서 obj로 "한 번에" 콜드스타트해 전혀 다른 지역해를 읽었기 때문.
+        // 그래서 이번엔 실제 세그먼트와 동일한 순서(liftoff->standoff->obj)로 seed를 체이닝해서
+        // 진짜 접근 경로가 도달할 자세를 그대로 재현한 뒤, 그 자세에서 법선 보정각을 구한다.
+        {
+            VectorXd probe_seed = base_seed;
+            VectorXd probe_q;
+            dualarm.SolveIK_Position(model, data, l_EE, r_EE, liftoffL,  liftoffR,  probe_seed, probe_q); probe_seed = probe_q;
+            dualarm.SolveIK_Position(model, data, l_EE, r_EE, standoffL, standoffR, probe_seed, probe_q); probe_seed = probe_q;
+            dualarm.SolveIK_Position(model, data, l_EE, r_EE, objL,      objR,      probe_seed, probe_q);
+
+            pinocchio::forwardKinematics(model, data, probe_q);
+            pinocchio::updateFramePlacements(model, data);
+
+            Vector3d nL_current = -data.oMf[l_EE].rotation().col(1);   // L: EE 로컬 -Y가 패드 법선
+            Vector3d nR_current =  data.oMf[r_EE].rotation().col(1);   // R: EE 로컬 +Y가 패드 법선 (대칭)
+            Vector3d axisL = data.oMf[l_wrist_yaw_frame].rotation().col(2);  // wrist_yaw 회전축(world)
+            Vector3d axisR = data.oMf[r_wrist_yaw_frame].rotation().col(2);
+
+            Vector3d squeeze_unit = squeeze_dir.normalized();
+            Vector3d nL_desired = -squeeze_unit;  // 왼팔 패드는 objL->물체중심 방향(=-squeeze_dir)을 향해야 함
+            Vector3d nR_desired =  squeeze_unit;  // 오른팔은 그 반대(대칭)
+
+            auto signedAngleAboutAxis = [](const Vector3d& a, const Vector3d& b, const Vector3d& axis) {
+                return std::atan2(axis.dot(a.cross(b)), a.dot(b));
+            };
+            double dThetaL = signedAngleAboutAxis(nL_current, nL_desired, axisL);
+            double dThetaR = signedAngleAboutAxis(nR_current, nR_desired, axisR);
+
+            const double WRIST_YAW_LIMIT = 0.85;  // dual_arm.xacro Wrist_yaw_joint 한계(±0.9)에 살짝 여유
+            double wrist_yaw_preorient_L = std::max(-WRIST_YAW_LIMIT, std::min(WRIST_YAW_LIMIT, probe_q(7)  + dThetaL));
+            double wrist_yaw_preorient_R = std::max(-WRIST_YAW_LIMIT, std::min(WRIST_YAW_LIMIT, probe_q(13) + dThetaR));
+            ROS_INFO("Wrist pre-orient (chained probe): dThetaL=%.1fdeg dThetaR=%.1fdeg -> target qL=%.1fdeg qR=%.1fdeg",
+                     dThetaL * rad2deg, dThetaR * rad2deg, wrist_yaw_preorient_L * rad2deg, wrist_yaw_preorient_R * rad2deg);
+            // base_seed의 손목 yaw를 이 사전 정렬값으로 덮어쓴다 - 이후 seed_vec = base_seed로 시작해서
+            // 파이프라인 전 구간에 걸쳐 이 값이 그대로 유지된다(SolveIK_Position이 손목 컬럼(7,8,13,14)을
+            // Jacobian/posture 양쪽에서 마스킹해서 건드리지 않기 때문).
+            base_seed(7)  = wrist_yaw_preorient_L;
+            base_seed(13) = wrist_yaw_preorient_R;
+        }
 
         std::vector<MatrixXd> pos_segs, vel_segs, acc_segs;
         std::vector<MatrixXd> cart_pos_segs, cart_vel_segs, cart_acc_segs;  // 어드미턴스용 desired Cartesian(x_d,ẋ_d,ẍ_d)
