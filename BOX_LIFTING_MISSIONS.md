@@ -386,6 +386,21 @@ Object baseline: 15cm box, center [0.45, 0, 1.225]
 - [ ] 양쪽 패드가 물체 측면과 접촉
 - [ ] 손목 정렬 후 각도가 안정적으로 유지됨
 
+### Pre-squeeze 결과 기록
+
+```text
+Date: 2026-07-19
+Box: center [0.45, 0, 1.225], size 0.15m
+Targets: Left [0.45, +0.095, 1.225], Right [0.45, -0.095, 1.225]
+Clearance: 각 박스 표면에서 20mm, 접촉/힘 제어 비활성
+Trajectory: 실제 현재 관절각에서 25s 5차 보간, gravity PD target으로 100Hz 전송
+IK error: Left 0.038mm, Right 0.037mm
+IK wrist max: 0.173rad
+Measured peak velocity: 0.0434rad/s
+Settled peak velocity: 4.9e-5rad/s
+Result: 양손 pre-squeeze 목표에서 안정적으로 정지
+```
+
 ---
 
 ## Mission 6 — 힘 및 손목 진단 토픽

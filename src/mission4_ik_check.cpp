@@ -4,6 +4,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/JointState.h>
 #include <std_msgs/Float64.h>
+#include <std_msgs/Float64MultiArray.h>
 #include <control_msgs/JointControllerState.h>
 
 #include <cmath>
@@ -50,7 +51,8 @@ int main(int argc, char** argv) {
     }
 
     VectorXd seed = VectorXd::Zero(DoF);
-    const bool publish_demo = argc > 1 && std::string(argv[1]) == "--publish";
+    const bool pre_squeeze = argc > 1 && std::string(argv[1]) == "--pre-squeeze";
+    const bool publish_demo = (argc > 1 && std::string(argv[1]) == "--publish") || pre_squeeze;
     if (publish_demo) {
         ros::init(argc, argv, "mission4_ik_demo");
         ros::NodeHandle nh;
@@ -76,9 +78,12 @@ int main(int argc, char** argv) {
     const Vector3d start_left = data.oMf[left_frame].translation();
     const Vector3d start_right = data.oMf[right_frame].translation();
 
-    // Small, reachable bilateral displacement with different directions catches cross-arm columns.
-    const Vector3d target_left = start_left + Vector3d(0.015, -0.010, 0.010);
-    const Vector3d target_right = start_right + Vector3d(0.015, 0.010, 0.010);
+    // Mission 5 first gate: stop 20mm outside the 150mm box surfaces without contact.
+    // Otherwise retain the small bilateral Mission 4 regression displacement.
+    const Vector3d target_left = pre_squeeze ? Vector3d(0.45, 0.095, 1.225)
+                                               : start_left + Vector3d(0.015, -0.010, 0.010);
+    const Vector3d target_right = pre_squeeze ? Vector3d(0.45, -0.095, 1.225)
+                                                : start_right + Vector3d(0.015, 0.010, 0.010);
     VectorXd result;
     dualarm.SolveIK_Position(model, data, left_frame, right_frame,
                              target_left, target_right, seed, result);
@@ -100,6 +105,26 @@ int main(int argc, char** argv) {
     std::cout << (pass ? "MISSION4_IK_PASS" : "MISSION4_IK_FAIL") << '\n';
     if (pass && publish_demo) {
         ros::NodeHandle nh;
+        if (pre_squeeze) {
+            ros::Publisher pub = nh.advertise<std_msgs::Float64MultiArray>(
+                "/dual_arm/gravity_pd_target", 1, true);
+            ros::WallDuration(0.5).sleep();
+            ros::WallRate rate(100);
+            // 25-second quintic blend from the measured current state.  The gravity PD
+            // controller applies its own torque slew limit, so both position and effort
+            // commands remain continuous.
+            for (int tick = 0; ros::ok() && tick < 3000; ++tick) {
+                const double u = std::min(1.0, tick / 2499.0);
+                const double blend = 10*std::pow(u, 3) - 15*std::pow(u, 4) + 6*std::pow(u, 5);
+                const VectorXd command = seed + blend * (result - seed);
+                std_msgs::Float64MultiArray message;
+                message.data.resize(DoF);
+                for (int i = 0; i < DoF; ++i) message.data[i] = command(i);
+                pub.publish(message);
+                rate.sleep();
+            }
+            return 0;
+        }
         const std::array<int, DoF> controller_to_pin = {{
             0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 1, 2}};
         std::array<ros::Publisher, DoF> pubs;
