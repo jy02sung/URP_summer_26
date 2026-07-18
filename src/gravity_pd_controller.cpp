@@ -35,16 +35,24 @@ class GravityPd {
   void run(){ros::WallRate rate(500);while(ros::ok()){ros::spinOnce();if(ready_)publish();rate.sleep();}}
  private:
   void stateCb(const sensor_msgs::JointState::ConstPtr&m){
+    last_state_wall_=ros::WallTime::now();
     for(size_t j=0;j<m->name.size();++j){auto it=index_.find(m->name[j]);if(it==index_.end()||j>=m->position.size()||j>=m->velocity.size())continue;int i=it->second;q_(i)=m->position[j];dq_(i)=m->velocity[j];seen_[i]=true;}
     if(!ready_&&std::all_of(seen_.begin(),seen_.end(),[](bool x){return x;})){ready_=true;ROS_INFO("Gravity PD ready; safe bent-arm target enabled.");}
   }
   void targetCb(const std_msgs::Float64MultiArray::ConstPtr&m){if(ready_&&m->data.size()==N)for(int i=0;i<N;++i)target_(i)=m->data[i];}
   void publish(){
     const Eigen::VectorXd g=pinocchio::computeGeneralizedGravity(model_,*data_,q_);std::array<double,N> tau{};
-    for(int i=0;i<N;++i)tau[i]=std::max(-limit[i],std::min(g(i)+kp[i]*(target_(i)-q_(i))-kd[i]*dq_(i),limit[i]));
+    // Gazebo pause 중에는 joint state가 끊기므로 마지막 비영 속도를 계속 감쇠항에
+    // 사용하면 unpause 첫 tick에 반대 방향 토크가 튀어 나간다. 20ms 이상 상태가
+    // 갱신되지 않았을 때는 정지 상태로 보고 D항의 속도를 0으로 사용한다.
+    const bool state_fresh=(ros::WallTime::now()-last_state_wall_).toSec()<0.020;
+    for(int i=0;i<N;++i){
+      const double velocity=state_fresh?dq_(i):0.0;
+      tau[i]=std::max(-limit[i],std::min(g(i)+kp[i]*(target_(i)-q_(i))-kd[i]*velocity,limit[i]));
+    }
     for(int c=0;c<N;++c){std_msgs::Float64 m;m.data=tau[ctrl_to_pin[c]];pubs_[c].publish(m);}
   }
   ros::NodeHandle nh_;ros::Subscriber state_,target_sub_;std::array<ros::Publisher,N> pubs_;std::map<std::string,int>index_;
-  pinocchio::Model model_;std::unique_ptr<pinocchio::Data> data_;Eigen::VectorXd q_,dq_,target_;std::array<bool,N>seen_{};bool ready_=false;
+  pinocchio::Model model_;std::unique_ptr<pinocchio::Data> data_;Eigen::VectorXd q_,dq_,target_;std::array<bool,N>seen_{};bool ready_=false;ros::WallTime last_state_wall_;
 };
 int main(int argc,char**argv){ros::init(argc,argv,"gravity_pd_controller");GravityPd c;c.run();}
