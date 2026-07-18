@@ -496,7 +496,7 @@ int main(int argc, char **argv)
         // 파지 직후 곧바로 파지점->이송목표 대각선 직선으로 이동하면 받침대/바닥 근처를 스치듯 지나갈
         // 수 있다. 스퀴즈를 유지한 채(PHASE_GRASP_TO_PLACE) 먼저 수직으로 LIFT_HEIGHT만큼 들어올린 뒤,
         // 그 높이에서 이송목표로 이동한다.
-        const double LIFT_HEIGHT = 0.10;  // 파지 높이에서 들어올릴 여유 [m]
+        const double LIFT_HEIGHT = 0.16;  // 파지 높이에서 들어올릴 여유 [m] (기존 0.10 -> 사용자 요청으로 상향)
         Vector3d liftL = objL + Vector3d(0, 0, LIFT_HEIGHT);
         Vector3d liftR = objR + Vector3d(0, 0, LIFT_HEIGHT);
 
