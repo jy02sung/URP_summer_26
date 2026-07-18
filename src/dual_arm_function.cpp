@@ -189,14 +189,16 @@ void DualArmControl::PDController(double* target_q, double* current_q, double* t
 ////////////////////////////////////////////////////////////////////////////////////////////
 //----------------------------------- Inverse Kinematics ---------------------------------//
 ////////////////////////////////////////////////////////////////////////////////////////////
-// DLS(Damped Least Squares) 위치 IK. 좌우를 6D 스택 태스크로 동시에 풀되,
-// 왼팔 frame에는 왼팔 6개 열만, 오른팔 frame에는 오른팔 6개 열만 허용한다.
+// DLS(Damped Least Squares) 위치 IK. 좌우 손 위치를 동시에 풀되 각 팔은
+// shoulder 3축 + elbow의 기존 4DoF만 사용한다. Wrist yaw/pitch는 위치 IK에서
+// 완전히 제외하고 접촉 시 수동 순응 레이어가 담당한다.
 //   e = [tL - xL ; tR - xR]   (6x1, 위치 오차)
 //   J = [JL(상위3행) ; JR(상위3행)]  (6 x DoF)
 //   dq = Jᵀ (J Jᵀ + λ²I)⁻¹ e
 //
-// Waist/head 열은 0으로 유지하고 반복마다 seed 값으로 복원하므로 arm IK가 상체/머리를
-// 움직일 수 없다. 각 팔은 shoulder 3 + elbow + wrist yaw/pitch의 6DoF만 사용한다.
+// 팔마다 3D 위치 태스크에 4DoF를 사용하므로 1DoF null space가 남는다. 이 여유는
+// elbow -90deg 자세를 선호하는 데 사용하며, 실제 보정은 shoulder/elbow가 함께 수행한다.
+// Waist/head/wrist는 반복마다 seed 값으로 복원한다.
 void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& data,
                                       pinocchio::FrameIndex l_EE, pinocchio::FrameIndex r_EE,
                                       const Vector3d& target_L, const Vector3d& target_R,
@@ -206,28 +208,14 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
     const double tol    = 1e-4;   // 수렴 허용 오차 [m]
     const int    maxIter= 300;    // 최대 반복
     const double step   = 1.0;    // 스텝 스케일 (= K·Δt 개념, 발산하면 줄이기)
-    // 위치 태스크의 여유 자유도로 elbow-down 자세를 부드럽게 선호한다.
-    // Damped projector는 완전한 직교 투영이 아니므로 큰 자세 gain은 위치 태스크로 샌다.
-    // 15DoF GUI 시험에서 0.1은 약 9.4 mm, 0.01은 약 3.0 mm 잔차를 남겨 기본값은 0.001로 낮춘다.
-    const double posture_gain = 0.001;
-    const double shoulder_roll_gain = 0.03;
-    const double shoulder_yaw_gain = 0.03;
+    const double elbow_posture_gain = 0.02;
 
     VectorXd q = q_seed;
-
-    // elbow-down + shoulder-roll 바깥벌림 선호 자세(q_pref). 순서는 DoF 배열과 동일:
-    // 0:Waist 1:Head_yaw 2:Head_pitch 3~8:L_arm 9~14:R_arm. Wrist preference는 0 rad다.
-    // Waist/Head는
-    // 0.0(중립) - Head는 애초 Jacobian에 관여 안 하므로 아래에서 null-space 기여분을 명시적으로
-    // 0으로 마스킹한다(관여 안 하는데도 (I-J⁺J)의 대각항이 1이라 그대로 두면 Head가 원치 않게
-    // 끌려간다).
-    VectorXd q_pref = VectorXd::Zero(DoF);
-    q_pref(3) = 0.80;  q_pref(4) = -0.345; q_pref(5) =  0.45; q_pref(6)  = -0.45;  // L: inward roll, elbow outward
-    q_pref(9) = 0.80; q_pref(10) =  0.345; q_pref(11) = -0.45; q_pref(12) = -0.45;  // R: inward roll, elbow outward
 
     for (int iter = 0; iter < maxIter; ++iter)
     {
         // 현재 q로 자코비안 + FK
+        pinocchio::forwardKinematics(model, data, q);
         pinocchio::computeJointJacobians(model, data, q);
         pinocchio::updateFramePlacements(model, data);
 
@@ -246,8 +234,8 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
         pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR);
 
         MatrixXd J = MatrixXd::Zero(6, model.nv);
-        J.block(0, 3, 3, 6) = JL.block(0, 3, 3, 6);  // left arm only
-        J.block(3, 9, 3, 6) = JR.block(0, 9, 3, 6);  // right arm only
+        J.block(0, 3, 3, 4) = JL.block(0, 3, 3, 4);  // L shoulder 3 + elbow
+        J.block(3, 9, 3, 4) = JR.block(0, 9, 3, 4);  // R shoulder 3 + elbow
 
         MatrixXd JJt = J * J.transpose() + (lambda*lambda) * MatrixXd::Identity(6,6);
         MatrixXd JJt_inv = JJt.ldlt().solve(MatrixXd::Identity(6,6));
@@ -255,35 +243,32 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
 
         VectorXd dq = Jpinv * e;
 
-        // Null-space 자세 항도 팔에만 허용한다.
+        // 손 위치를 바꾸지 않는 범위에서 양쪽 elbow를 -90deg로 유도한다.
         MatrixXd N = MatrixXd::Identity(model.nv, model.nv) - Jpinv * J;
-        VectorXd postureErr = posture_gain * (q_pref - q);
-        postureErr(4)  = shoulder_roll_gain * (q_pref(4)  - q(4));
-        postureErr(10) = shoulder_roll_gain * (q_pref(10) - q(10));
-        postureErr(5)  = shoulder_yaw_gain * (q_pref(5)  - q(5));
-        postureErr(11) = shoulder_yaw_gain * (q_pref(11) - q(11));
-        postureErr.head<3>().setZero();
+        VectorXd postureErr = VectorXd::Zero(model.nv);
+        postureErr(6)  = elbow_posture_gain * (-M_PI_2 - q(6));
+        postureErr(12) = elbow_posture_gain * (-M_PI_2 - q(12));
         dq += N * postureErr;
 
-        // 수치 오차까지 포함해 waist/head 변화량을 완전히 차단한다.
+        // 수치 오차까지 포함해 waist/head와 wrist 변화량을 완전히 차단한다.
         dq.head<3>().setZero();
+        dq(7) = dq(8) = dq(13) = dq(14) = 0.0;
 
         q += step * dq;
         q.head<3>() = q_seed.head<3>();
+        q(7) = q_seed(7);   q(8) = q_seed(8);
+        q(13) = q_seed(13); q(14) = q_seed(14);
 
         // 관절 한계 클램핑
         for (int i = 0; i < model.nq; ++i)
             q(i) = std::min(std::max(q(i), model.lowerPositionLimit(i)),
                                            model.upperPositionLimit(i));
 
-        // URDF의 ±0.9/±0.6은 파손 방지 물리 한계다. 위치-only IK가 여유 자유도로
-        // 손목을 끝까지 사용하는 것을 막고 정상 운전 범위 안에서만 해를 찾는다.
-        constexpr double wrist_ik_limit = 0.35;
-        for (const int i : {7, 8, 13, 14})
-            q(i) = std::min(std::max(q(i), -wrist_ik_limit), wrist_ik_limit);
     }
 
     q.head<3>() = q_seed.head<3>();
+    q(7) = q_seed(7);   q(8) = q_seed(8);
+    q(13) = q_seed(13); q(14) = q_seed(14);
 
     q_out = q;
 }

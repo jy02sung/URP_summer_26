@@ -248,7 +248,9 @@ class DualArmControl
         void PDController(double* target_q, double* current_q, double* target_q_dot, double* current_q_dot, double* PDtorque);
         
         // === 추가: DLS 역기구학 (위치만, 좌우 동시) ===
-        // 목표 좌우 wrist IK frame 위치를 받아 15개 벡터를 채우되 각 팔 6개 관절만 변경한다.
+        // 목표 좌우 wrist IK frame 위치를 받아 15개 벡터를 채우되 각 팔의 기존
+        // shoulder 3축 + elbow만 변경한다. Wrist yaw/pitch는 seed 값으로 고정해
+        // 접촉 시 별도의 수동 순응 레이어가 정렬하도록 한다.
         // model, data, 프레임 ID는 main에서 넘겨받음. q_seed는 IK 초기 추정값(보통 현재 관절각).
         void SolveIK_Position(pinocchio::Model& model, pinocchio::Data& data,
                               pinocchio::FrameIndex l_EE, pinocchio::FrameIndex r_EE,
