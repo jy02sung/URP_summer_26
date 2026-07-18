@@ -325,7 +325,7 @@
     <origin rpy="-0.34907 0 0" xyz="-0.0082603 -0.16 0.36224"/>
     <parent link="Torso"/>
     <child link="R_shoulder_pitch"/>
-    <axis xyz="1 0 0"/>
+    <axis xyz="0 1 0"/>
     <dynamics damping="1"/>
     <limit effort="55" lower="-3.14" upper="1.05" velocity="16"/>
   </joint>
