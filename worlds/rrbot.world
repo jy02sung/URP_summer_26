@@ -70,10 +70,14 @@
          IK가 whole-body(허리 포함) DLS라 워크스페이스 여유가 있어 문제 없을 것으로 예상 -
          단, 실제 스캔 인식/파지 성공 여부는 이 커밋 시점에는 headless 검증 전이며 사용자가
          GUI로 직접 확인할 예정(아래 결과/검증 참고). -->
+    <!-- 2026-07-19 (vertical-lift-experiment 브랜치 전용): 수직 최대 리프트 데모를 위해
+         물체 초기 y를 -0.23 -> 0으로 이동(x=0.45, z=1.075는 유지). 이 브랜치는
+         admittance-control-table-viz/admittance-control과 별개의 실험이라 y=-0.23을
+         쓰던 기존 pick bearing(-27deg) 검증 결과와 무관함. -->
     <include>
       <uri>model://aruco_box_26</uri>
       <name>aruco_box_26</name>
-      <pose>0.45 -0.23 1.075 0 0 0</pose>
+      <pose>0.45 0 1.075 0 0 0</pose>
     </include>
 
     <!-- pick_pedestal 주석 처리 (10차 수정, 2026-07-18): transport_fan_table 하나로 통합되면서

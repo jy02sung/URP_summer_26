@@ -459,16 +459,14 @@ int main(int argc, char **argv)
         Vector3d start_L = data.oMf[l_EE].translation();
         Vector3d start_R = data.oMf[r_EE].translation();
 
-        // 물체/이송목표 좌우 접근점 (물체의 실제 yaw만큼 회전된 축 양쪽에서 감싸는 자세).
-        // squeeze_dir는 "중심 -> 왼손" 방향의 단위벡터를 물체 yaw로 회전시킨 것 - 이 방향을
-        // objL/R뿐 아니라 transportL/R에도 동일하게 적용해서, 파지~이송 내내(스퀴즈를 쥐고 있는
-        // 동안) 양손 간격 방향이 도중에 바뀌지 않도록 한다(안 그러면 lift/transport 전환 시점에
-        // 손 간격 방향이 갑자기 world-Y로 스냅해 쥐고 있던 그립에 충격을 준다).
+        // 물체 좌우 접근점 (물체의 실제 yaw만큼 회전된 축 양쪽에서 감싸는 자세).
+        // squeeze_dir는 "중심 -> 왼손" 방향의 단위벡터를 물체 yaw로 회전시킨 것.
+        // vertical-lift-experiment 브랜치: 사용자가 입력하는 이송 목표(transport_pt)는 이
+        // 실험에서 쓰지 않는다 - 물체를 다른 곳으로 옮기는 게 아니라 "제자리에서 수직으로
+        // 최대한 들어올렸다가 같은 자리에 다시 내려놓는" 동작이라 목표점 자체가 objL/R이다.
         const Vector3d squeeze_dir = obj_yaw_rot * Vector3d(0, grasp_offset, 0);
         Vector3d objL = obj + squeeze_dir;
         Vector3d objR = obj - squeeze_dir;
-        Vector3d transportL = transport_pt + squeeze_dir;
-        Vector3d transportR = transport_pt - squeeze_dir;
 
         // pick_pedestal(world 파일)이 파지점 바로 아래(z 1.05~1.15)에 y로 걸쳐 있어서, 시작 자세에서
         // objL/R로 곧장 3D 직선 이동하면 z가 받침대 상판보다 낮은 구간에서 x,y가 이미 받침대 영역에
@@ -498,12 +496,15 @@ int main(int argc, char **argv)
         Vector3d liftoffL(start_L.x() + SAFE_TRANSIT_FORWARD_X, start_L.y(), SAFE_TRANSIT_Z);
         Vector3d liftoffR(start_R.x() + SAFE_TRANSIT_FORWARD_X, start_R.y(), SAFE_TRANSIT_Z);
 
-        // 파지 직후 곧바로 파지점->이송목표 대각선 직선으로 이동하면 받침대/바닥 근처를 스치듯 지나갈
-        // 수 있다. 스퀴즈를 유지한 채(PHASE_GRASP_TO_PLACE) 먼저 수직으로 LIFT_HEIGHT만큼 들어올린 뒤,
-        // 그 높이에서 이송목표로 이동한다.
-        const double LIFT_HEIGHT = 0.16;  // 파지 높이에서 들어올릴 여유 [m] (기존 0.10 -> 사용자 요청으로 상향)
-        Vector3d liftL = objL + Vector3d(0, 0, LIFT_HEIGHT);
-        Vector3d liftR = objR + Vector3d(0, 0, LIFT_HEIGHT);
+        // vertical-lift-experiment: 파지 지점에서 x,y는 그대로 두고 z만 MAX_LIFT_Z까지 수직으로
+        // 들어올린다. MAX_LIFT_Z=1.5는 실측(pinocchio DLS IK를 이 x=0.45,y=0 파지 지점 기준으로
+        // 0.02m 간격 이분 탐색) 근거 - z=1.5까지는 IK 위치 오차가 5mm 이내로 유지되다가 z=1.6~1.7
+        // 구간부터 팔이 거의 다 펴지는 특이자세에 가까워지며 오차가 급격히 커짐(관절 한계에 걸리는
+        // 게 아니라 자코비안이 특이해지는 것 - 어떤 관절도 lower/upper limit에 닿지 않았음을
+        // 확인함). 1.5는 "정확히 도달 가능한 한계 안쪽"에서 신뢰 가능한 최대값으로 선택.
+        const double MAX_LIFT_Z = 1.5;
+        Vector3d maxLiftL(objL.x(), objL.y(), MAX_LIFT_Z);
+        Vector3d maxLiftR(objR.x(), objR.y(), MAX_LIFT_Z);
 
         // 그립패드 초기 방향 사전 정렬(사용자 요청, 2026-07-18): 기존에는 접촉 전까지 손목
         // 목표가 항상 base_q의 손목값(정지 상태 PD가 수렴한 ~0)이라, waist가 크게 회전한
@@ -670,24 +671,27 @@ int main(int argc, char **argv)
         const double APPROACH_CONTACT_V_DES = 0.03;
         addCartesianSegment(standoffL, objL, standoffR, objR, PHASE_APPROACH, APPROACH_CONTACT_V_DES);
 
-        // 2) 파지 위치에서 수직으로 들어올리기. 이 구간부터 PHASE_GRASP_TO_PLACE로 태깅되어 임피던스
-        //    제어가 켜지고, 양팔 스퀴즈(grasp_offset) 마찰로 물체를 실제로 붙잡아 든다.
-        addCartesianSegment(objL, liftL, objR, liftR, PHASE_GRASP_TO_PLACE);
+        // 2) 파지 위치에서 수직으로 최대 높이(MAX_LIFT_Z)까지 들어올리기. 이 구간부터
+        //    PHASE_GRASP_TO_PLACE로 태깅되어 임피던스 제어가 켜지고, 양팔 스퀴즈(grasp_offset)
+        //    마찰로 물체를 실제로 붙잡아 든다. x,y는 objL/R과 동일 - 순수 수직 상승.
+        addCartesianSegment(objL, maxLiftL, objR, maxLiftR, PHASE_GRASP_TO_PLACE);
 
-        // 2b) 들어올린 높이를 유지한 채 목표 지점으로 이동 (계속 PHASE_GRASP_TO_PLACE, 스퀴즈 유지)
-        addCartesianSegment(liftL, transportL, liftR, transportR, PHASE_GRASP_TO_PLACE);
+        // 2b) vertical-lift-experiment: 최대 높이에서 다시 같은 x,y로 수직 하강해 원래 파지
+        //     지점(objL/R)으로 되돌아온다 - "제자리에 다시 내려두는" 요구사항. 계속
+        //     PHASE_GRASP_TO_PLACE로 스퀴즈를 유지한 채 내려온다.
+        addCartesianSegment(maxLiftL, objL, maxLiftR, objR, PHASE_GRASP_TO_PLACE);
 
-        // 3) 놓기: transportL/R에 그대로 머물며(변위 0) 스퀴즈 목표힘을 램프다운 - 아래 온라인
-        //    루프의 PHASE_RELEASE 분기가 이 dwell 구간(1000 tick, CartesianLineTrajectory가
+        // 3) 놓기: objL/R(원래 파지 지점)에 그대로 머물며(변위 0) 스퀴즈 목표힘을 램프다운 - 아래
+        //    온라인 루프의 PHASE_RELEASE 분기가 이 dwell 구간(1000 tick, CartesianLineTrajectory가
         //    거리 0일 때 Tf=1.0으로 fallback하는 것을 그대로 이용) 동안 힘을 0으로 스르륵 뺀다.
-        addCartesianSegment(transportL, transportL, transportR, transportR, PHASE_RELEASE);
+        addCartesianSegment(objL, objL, objR, objR, PHASE_RELEASE);
 
         // 3b) 후퇴: 스퀴즈가 이미 0으로 빠진 상태에서, 파지 때와 같은 축(squeeze_dir)을 따라
         //     양손을 서로 반대 방향으로 RETREAT_DIST만큼 벌려 물체에서 확실히 손을 뗀다.
         const Vector3d retreat_dir = squeeze_dir.normalized() * RETREAT_DIST;
-        Vector3d retreatL = transportL + retreat_dir;
-        Vector3d retreatR = transportR - retreat_dir;
-        addCartesianSegment(transportL, retreatL, transportR, retreatR, PHASE_RETURN);
+        Vector3d retreatL = objL + retreat_dir;
+        Vector3d retreatR = objR - retreat_dir;
+        addCartesianSegment(objL, retreatL, objR, retreatR, PHASE_RETURN);
 
         // 3c) 테이블 이탈: 후퇴 지점(테이블 위, z~1.075)에서 곧장 대기 자세로 대각선으로 가면
         // 갈 때와 대칭적으로 테이블 위를 스치듯 지나갈 위험이 있다(0)/0b)와 동일한 문제). 그래서
@@ -699,8 +703,8 @@ int main(int argc, char **argv)
         // 내려놓았고 카메라로 추적할 대상이 없으므로 머리를 정면(0,0)으로 되돌린다(track_head=false).
         addCartesianSegment(liftoffL, start_L, liftoffR, start_R, PHASE_RETURN, 0.1, false);
 
-        ROS_INFO("Vision pick(dual-arm): object(world)=[%.3f %.3f %.3f], transport=[%.3f %.3f %.3f]",
-                 obj.x(), obj.y(), obj.z(),
+        ROS_INFO("Vision pick(vertical-lift-experiment): object(world)=[%.3f %.3f %.3f], max_lift_z=%.2f (입력 이송좌표 [%.3f %.3f %.3f]는 이 실험에서 미사용)",
+                 obj.x(), obj.y(), obj.z(), MAX_LIFT_Z,
                  transport_pt.x(), transport_pt.y(), transport_pt.z());
 
         int total_rows = 0;
