@@ -391,9 +391,13 @@ int main(int argc, char **argv)
         }
 
         // aruco_ros가 보고하는 pose는 "마커 패치"의 pose이지 박스 중심이 아니다.
-        // aruco_box_26/model.sdf: 마커 패치가 박스 로컬 -X면에 pose x=-0.0755로 붙어있음(박스 15cm 절반+마커두께),
-        // 이 world의 aruco_box_26은 항상 회전 없이(rpy=0) 스폰되므로 박스 로컬 -X = world -X로 고정이다.
-        // 박스 중심 = 마커 위치 + (0.0755, 0, 0).
+        // 2026-07-18: 마커를 박스 로컬 -X 측면에서 +Z 윗면으로 옮김(models/aruco_box_26/model.sdf,
+        // pose z=0.0755, 박스 15cm 절반+마커두께) - 보정 방향도 그에 맞춰 X축에서 Z축으로 변경.
+        // 박스 중심 = 마커 위치 - (0, 0, 0.0755) (마커가 박스 중심보다 위에 있으므로 내려서 보정).
+        // 윗면 오프셋은 박스가 yaw로 돌아가 있어도 항상 world -Z 방향 그대로 유지된다(요 회전축과
+        // 오프셋 축이 같은 Z라 회전에 영향을 안 받음) - 옛 -X 측면 오프셋은 박스가 yaw로 돌면 world
+        // 프레임에서 방향이 같이 돌아야 했는데 고정 오프셋이라 그 경우엔 원래도 부정확했던 문제가
+        // 이번 변경으로 자연히 해소됨.
         // (주의: 처음에는 pose의 orientation(Z축=마커 법선)으로 회전에 무관하게 일반화해서 보정하려 했으나,
         //  이 시야각(오블리크)에서는 ArUco의 orientation 추정 자체가 부정확해서 오히려 오차가 커짐을 실측으로
         //  확인함. position(위치) 추정은 안정적이므로, 이 데모 world처럼 물체가 항상 축정렬로 스폰되는
@@ -405,7 +409,7 @@ int main(int argc, char **argv)
         Vector3d obj = Vector3d(object_world.pose.position.x,
                                  object_world.pose.position.y,
                                  object_world.pose.position.z)
-                       + Vector3d(MARKER_TO_BOX_CENTER, 0, 0);
+                       + Vector3d(0, 0, -MARKER_TO_BOX_CENTER);
         Vector3d transport_pt(dual_arm_commandx[0], dual_arm_commandx[1], dual_arm_commandx[2]);
 
         // 오라클(시뮬레이션 전용): 실제 인식 파이프라인이 아니라 Gazebo ground truth로 물체의
@@ -466,14 +470,13 @@ int main(int argc, char **argv)
         // 2026-07-18: transport_fan_table이 옛 받침대(17x17cm)보다 훨씬 큰 단일 상판(0.6x1.4m)으로
         // 바뀌면서, 대기 자세(start_L/R)에서 standoffL/R로 곧장 가는 대각선 직선이 테이블 상판
         // 위를 스치듯 지나가 걸리는 문제가 발생함(STANDOFF_Y는 옛 받침대 기준 클리어런스라 지금
-        // 넓은 테이블에는 부족). 그래서 이 구간을 대각선 1개 대신 "제자리에서 안전 높이로 상승 ->
-        // 그 높이에서 수평 이동 -> standoff 높이로 하강" 3단계로 나눈다. SAFE_TRANSIT_Z는 테이블
-        // 상판(z=1.0)보다 5cm 위로 잡아 상판을 확실히 넘어가게 함.
+        // 넓은 테이블에는 부족). 그래서 이 구간을 "제자리에서 안전 높이로 상승 -> standoff로 이동"
+        // 2단계로 나눈다(사용자 확인: 안전 높이에 오른 뒤부터는 그대로 standoff까지 한 번에 가도
+        // 됨 - 어차피 그 사이 이동은 y 위주라 대각선 하강 도중 테이블에 걸릴 일이 없음). SAFE_TRANSIT_Z는
+        // 테이블 상판(z=1.0)보다 5cm 위로 잡아 상승 시점에는 상판을 확실히 넘어가게 함.
         const double SAFE_TRANSIT_Z = 1.05;  // 테이블 상판(z=1.0)보다 위 - 접근 전 안전 이동 높이
         Vector3d liftoffL(start_L.x(), start_L.y(), SAFE_TRANSIT_Z);
         Vector3d liftoffR(start_R.x(), start_R.y(), SAFE_TRANSIT_Z);
-        Vector3d transitL(standoffL.x(), standoffL.y(), SAFE_TRANSIT_Z);
-        Vector3d transitR(standoffR.x(), standoffR.y(), SAFE_TRANSIT_Z);
 
         // 파지 직후 곧바로 파지점->이송목표 대각선 직선으로 이동하면 받침대/바닥 근처를 스치듯 지나갈
         // 수 있다. 스퀴즈를 유지한 채(PHASE_GRASP_TO_PLACE) 먼저 수직으로 LIFT_HEIGHT만큼 들어올린 뒤,
@@ -540,11 +543,8 @@ int main(int argc, char **argv)
         // 0) 대기 자세에서 제자리(x,y 그대로) 안전 높이(SAFE_TRANSIT_Z)까지 수직 상승
         addCartesianSegment(start_L, liftoffL, start_R, liftoffR, PHASE_APPROACH);
 
-        // 0b) 안전 높이를 유지한 채 standoff의 x,y 위로 수평 이동 (테이블 상판 위를 여유 있게 통과)
-        addCartesianSegment(liftoffL, transitL, liftoffR, transitR, PHASE_APPROACH);
-
-        // 0c) standoff 높이(파지 높이 유지)까지 수직 하강
-        addCartesianSegment(transitL, standoffL, transitR, standoffR, PHASE_APPROACH);
+        // 0b) 안전 높이에서 standoff로 곧장 이동 (테이블 상판보다 위에서 출발하므로 대각선이어도 걸리지 않음)
+        addCartesianSegment(liftoffL, standoffL, liftoffR, standoffR, PHASE_APPROACH);
 
         // 1b) standoff -> 파지 위치로 y 방향 직선 접근 (파지 높이를 그대로 유지하므로 받침대와 부딪히지 않음)
         // objL/R은 이미 박스 표면 안쪽(grasp_offset 침투)까지를 목표로 하므로, 기본 속도(0.1m/s)로
