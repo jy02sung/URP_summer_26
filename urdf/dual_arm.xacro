@@ -366,6 +366,28 @@
     <dynamics damping="1" />
     <limit lower="-0.9" upper="0.9" effort="12" velocity="4" />
   </joint>
+  <!-- Palm flexion axis near the palm. The contact normal is local Y, so the
+       local X axis tilts the palm forward/back instead of spinning it in-plane. -->
+  <link name="L_wrist_pitch">
+    <inertial>
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <mass value="0.15" />
+      <inertia ixx="0.00015" ixy="0" ixz="0" iyy="0.00015" iyz="0" izz="0.00008" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <geometry><cylinder length="0.03" radius="0.015" /></geometry>
+      <material name="wrist_dark" />
+    </visual>
+  </link>
+  <joint name="L_wrist_pitch_joint" type="revolute">
+    <origin xyz="0 0 -0.12" rpy="0 0 0" />
+    <parent link="L_wrist_yaw" />
+    <child link="L_wrist_pitch" />
+    <axis xyz="1 0 0" />
+    <dynamics damping="1.5" />
+    <limit lower="-0.6" upper="0.6" effort="12" velocity="3" />
+  </joint>
   <link name="L_wrist_ik_frame">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -375,7 +397,7 @@
   </link>
   <joint name="L_wrist_ik_joint" type="fixed">
     <origin xyz="0 0 -0.10" rpy="0 0 0" />
-    <parent link="L_wrist_yaw" />
+    <parent link="L_wrist_pitch" />
     <child link="L_wrist_ik_frame" />
   </joint>
   <link
@@ -444,10 +466,10 @@
     name="L_EE_joint"
     type="fixed">
     <origin
-      xyz="0 0 -0.15"
+      xyz="0 0 -0.03"
       rpy="0 0 0" />
     <parent
-      link="L_wrist_yaw" />
+      link="L_wrist_pitch" />
     <child
       link="L_EE" />
     <axis
@@ -723,6 +745,26 @@
     <dynamics damping="1" />
     <limit lower="-0.9" upper="0.9" effort="12" velocity="4" />
   </joint>
+  <link name="R_wrist_pitch">
+    <inertial>
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <mass value="0.15" />
+      <inertia ixx="0.00015" ixy="0" ixz="0" iyy="0.00015" iyz="0" izz="0.00008" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 -0.015" rpy="0 0 0" />
+      <geometry><cylinder length="0.03" radius="0.015" /></geometry>
+      <material name="wrist_dark" />
+    </visual>
+  </link>
+  <joint name="R_wrist_pitch_joint" type="revolute">
+    <origin xyz="0 0 -0.12" rpy="0 0 0" />
+    <parent link="R_wrist_yaw" />
+    <child link="R_wrist_pitch" />
+    <axis xyz="1 0 0" />
+    <dynamics damping="1.5" />
+    <limit lower="-0.6" upper="0.6" effort="12" velocity="3" />
+  </joint>
   <link name="R_wrist_ik_frame">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0" />
@@ -732,7 +774,7 @@
   </link>
   <joint name="R_wrist_ik_joint" type="fixed">
     <origin xyz="0 0 -0.10" rpy="0 0 0" />
-    <parent link="R_wrist_yaw" />
+    <parent link="R_wrist_pitch" />
     <child link="R_wrist_ik_frame" />
   </joint>
   <link
@@ -799,10 +841,10 @@
     name="R_EE_joint"
     type="fixed">
     <origin
-      xyz="0 0 -0.15"
+      xyz="0 0 -0.03"
       rpy="0 0 0" />
     <parent
-      link="R_wrist_yaw" />
+      link="R_wrist_pitch" />
     <child
       link="R_EE" />
     <axis
@@ -1004,6 +1046,12 @@
     <implicitSpringDamper>true</implicitSpringDamper>
   </gazebo>
   <gazebo reference="R_wrist_yaw_joint">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <gazebo reference="L_wrist_pitch_joint">
+    <implicitSpringDamper>true</implicitSpringDamper>
+  </gazebo>
+  <gazebo reference="R_wrist_pitch_joint">
     <implicitSpringDamper>true</implicitSpringDamper>
   </gazebo>
 

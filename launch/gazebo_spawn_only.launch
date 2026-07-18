@@ -24,11 +24,13 @@
       -J L_shoulder_yaw_joint 0
       -J L_elbow_joint 0
       -J L_wrist_yaw_joint 0
+      -J L_wrist_pitch_joint 0
       -J R_shoulder_pitch_joint 0
       -J R_shoulder_roll_joint 0
       -J R_shoulder_yaw_joint 0
       -J R_elbow_joint 0
       -J R_wrist_yaw_joint 0
+      -J R_wrist_pitch_joint 0
       -J Head_yaw_joint 0
       -J Head_pitch_joint 0" />
 </launch>
