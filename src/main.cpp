@@ -7,8 +7,9 @@
 #include <ros/package.h>
 
 // place 목표 지점(이송 목표)을 눈으로 확인할 수 있도록 vision pick 명령이 들어올 때마다 스폰하는
-// 표시용 모델. static이라 물리엔진과 무관 - pedestal은 물체가 도착했을 때 실제로 받쳐주기도 하고,
-// 위의 보라색 구는 명령으로 입력한 좌표(dual_arm_commandx) 그 자체를 정확히 표시한다.
+// 표시용 모델. static이라 물리엔진과 무관 - 분홍색 구는 명령으로 입력한 좌표(dual_arm_commandx)
+// 그 자체를 정확히 표시한다. 받침대(초록 박스)는 world 파일의 transport_fan_table 상판이 그
+// 역할을 대신하게 되어 2026-07-18 제거함(사용자 요청).
 // 매번 같은 이름("place_indicator")으로 스폰하므로, 재사용 전에 항상 delete부터 해서 이전 실행의
 // 잔여물이 안 남게 한다.
 const string PLACE_INDICATOR_SDF = R"(
@@ -17,18 +18,6 @@ const string PLACE_INDICATOR_SDF = R"(
   <model name="place_indicator">
     <static>true</static>
     <link name="link">
-      <collision name="pedestal_collision">
-        <pose>0 0 -0.125 0 0 0</pose>
-        <geometry><box><size>0.17 0.17 0.10</size></box></geometry>
-      </collision>
-      <visual name="pedestal_visual">
-        <pose>0 0 -0.125 0 0 0</pose>
-        <geometry><box><size>0.17 0.17 0.10</size></box></geometry>
-        <material>
-          <ambient>0.2 0.8 0.2 1</ambient>
-          <diffuse>0.2 0.8 0.2 1</diffuse>
-        </material>
-      </visual>
       <visual name="target_point_visual">
         <pose>0 0 0 0 0 0</pose>
         <geometry><sphere><radius>0.02</radius></sphere></geometry>
