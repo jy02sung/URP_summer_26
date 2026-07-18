@@ -17,13 +17,16 @@ const std::array<int,N> ctrl_to_pin={{0,3,4,5,6,7,8,9,10,11,12,13,14,1,2}};
 const std::array<double,N> kp={{10,1,5,10,10,10,10,2,2,10,10,10,10,2,2}};
 const std::array<double,N> kd={{3,.2,1.5,4,4,4,4,.8,.8,4,4,4,4,.8,.8}};
 const std::array<double,N> limit={{30,5,10,15,15,15,15,4,4,15,15,15,15,4,4}};
+// 500Hz wall loop 기준 한 tick에 허용할 최대 토크 변화. 어깨/팔꿈치는
+// 0.20Nm, 손목은 0.06Nm로 제한해 GUI scheduling gap이 있어도 kick을 막는다.
+const std::array<double,N> torque_step={{.30,.05,.10,.20,.20,.20,.20,.06,.06,.20,.20,.20,.20,.06,.06}};
 }
 
 class GravityPd {
  public:
   GravityPd() {
     pinocchio::urdf::buildModel(ros::package::getPath("dual_arm")+"/urdf/dual_arm.urdf",model_);
-    data_.reset(new pinocchio::Data(model_)); q_.setZero(N);dq_.setZero(N);target_.setZero(N);
+    data_.reset(new pinocchio::Data(model_)); q_.setZero(N);dq_.setZero(N);target_.setZero(N);last_tau_.fill(0.0);
     // spawn_model의 -J 적용 전에 잠깐 발행되는 영점 상태를 목표로 래치하지 않는다.
     // 팔을 몸에서 떼고 팔꿈치를 굽힌, Mission 4의 비특이 안전 시드를 시작 목표로 사용한다.
     target_(3)=-0.2; target_(4)=0.35; target_(6)=-0.9;
@@ -45,14 +48,17 @@ class GravityPd {
     // Gazebo pause 중에는 joint state가 끊기므로 마지막 비영 속도를 계속 감쇠항에
     // 사용하면 unpause 첫 tick에 반대 방향 토크가 튀어 나간다. 20ms 이상 상태가
     // 갱신되지 않았을 때는 정지 상태로 보고 D항의 속도를 0으로 사용한다.
-    const bool state_fresh=(ros::WallTime::now()-last_state_wall_).toSec()<0.020;
+    // GUI 부하에서 실측된 정상 message gap(44ms)보다 충분히 큰 200ms를 사용한다.
+    const bool state_fresh=(ros::WallTime::now()-last_state_wall_).toSec()<0.200;
     for(int i=0;i<N;++i){
       const double velocity=state_fresh?dq_(i):0.0;
-      tau[i]=std::max(-limit[i],std::min(g(i)+kp[i]*(target_(i)-q_(i))-kd[i]*velocity,limit[i]));
+      const double desired=std::max(-limit[i],std::min(g(i)+kp[i]*(target_(i)-q_(i))-kd[i]*velocity,limit[i]));
+      const double delta=std::max(-torque_step[i],std::min(desired-last_tau_[i],torque_step[i]));
+      tau[i]=last_tau_[i]+delta; last_tau_[i]=tau[i];
     }
     for(int c=0;c<N;++c){std_msgs::Float64 m;m.data=tau[ctrl_to_pin[c]];pubs_[c].publish(m);}
   }
   ros::NodeHandle nh_;ros::Subscriber state_,target_sub_;std::array<ros::Publisher,N> pubs_;std::map<std::string,int>index_;
-  pinocchio::Model model_;std::unique_ptr<pinocchio::Data> data_;Eigen::VectorXd q_,dq_,target_;std::array<bool,N>seen_{};bool ready_=false;ros::WallTime last_state_wall_;
+  pinocchio::Model model_;std::unique_ptr<pinocchio::Data> data_;Eigen::VectorXd q_,dq_,target_;std::array<bool,N>seen_{};std::array<double,N>last_tau_{};bool ready_=false;ros::WallTime last_state_wall_;
 };
 int main(int argc,char**argv){ros::init(argc,argv,"gravity_pd_controller");GravityPd c;c.run();}
