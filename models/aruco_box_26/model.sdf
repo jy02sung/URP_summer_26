@@ -7,15 +7,18 @@
     <static>false</static>
     <link name="link">
       <inertial>
-        <mass>0.2</mass>
+        <!-- vertical-lift-experiment: 0.2 -> 1.6kg (사용자 요청, F/T 센서 수직 지지력이 스퀴즈
+             목표(10N)에 근접하도록 - mu=1.2/스퀴즈10N 기준 한쪽당 최대 정지마찰 12N에 여유를
+             둔 값, 자세한 계산은 커밋 메시지 참고). -->
+        <mass>1.6</mass>
         <!-- solid cube, side 0.15m: ixx=iyy=izz = (1/6)*m*s^2 -->
         <inertia>
-          <ixx>0.00075</ixx>
+          <ixx>0.006</ixx>
           <ixy>0</ixy>
           <ixz>0</ixz>
-          <iyy>0.00075</iyy>
+          <iyy>0.006</iyy>
           <iyz>0</iyz>
-          <izz>0.00075</izz>
+          <izz>0.006</izz>
         </inertia>
       </inertial>
 
