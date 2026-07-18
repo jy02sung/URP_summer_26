@@ -73,9 +73,18 @@ unsigned long scan_last_seq = 0;
 std::vector<Vector3d> scan_match_buf;  // 연속 프레임 일치 판정용 버퍼 (카메라 프레임 좌표)
 double scan_q[DoF] = {0,};             // 스캔 진행 중 "현재 명령 관절각" (head만 갱신, 나머지는 스캔 시작 시점 값 유지)
 
-const double HEAD_SCAN_YAW_LEFT       = -0.3;    // 스윕 좌측 끝 yaw [rad] (horizontal_fov=1.047rad의 절반보다 여유있게 작음)
-const double HEAD_SCAN_YAW_RIGHT      = 0.3;     // 스윕 우측 끝 yaw [rad]
-const int    HEAD_SCAN_YAW_STEPS      = 3;       // 좌/중앙/우 3단계 (중앙=0.0deg, 기존 HEAD_SCAN_YAW와 동일)
+// 2026-07-18: 실측(GUI 실행) 결과 마커가 스윕 범위의 맨 끝(yaw=-17.2deg, 3단계 중 좌측 끝)에서야
+// 겨우 검출됨 - 실제 필요한 각도가 범위 경계에 아슬아슬하게 걸쳐 있어서, 조금만 더 벗어나면 15단계를
+// 전부 훑고도 못 찾을 위험이 있었다(실측으로 실제 재현됨). ±0.3rad(17.2deg)에서 ±0.6rad(34.4deg)로
+// 넉넉하게 확대.
+// 주의(2차 실측으로 발견/수정): STEPS를 3으로 그대로 두고 범위만 넓히면 샘플 지점이
+// {-34.4,0,34.4}deg로 바뀌어서, 기존에 실제로 검출됐던 -17.2deg 지점 자체가 더 이상 샘플에
+// 포함되지 않는다(재현 확인: 새 범위로 재실행했더니 -34.4deg에서 못 찾고 멈춰 있었음). 범위를
+// 넓히면서도 기존 성공 지점(17.2deg 간격)을 계속 포함하도록 STEPS를 3->5로 늘려
+// {-34.4,-17.2,0,17.2,34.4}deg 5개 샘플이 되게 함.
+const double HEAD_SCAN_YAW_LEFT       = -0.6;    // 스윕 좌측 끝 yaw [rad] (약 -34.4deg)
+const double HEAD_SCAN_YAW_RIGHT      = 0.6;     // 스윕 우측 끝 yaw [rad] (약 +34.4deg)
+const int    HEAD_SCAN_YAW_STEPS      = 5;       // -34.4/-17.2/0/17.2/34.4deg 5단계 (기존 실증된 -17.2deg 지점을 유지하면서 범위 확장)
 const double HEAD_SCAN_PITCH_TOP      = 0.15;    // 스윕 시작 pitch(위쪽, 덜 내려다봄) [rad]
 const double HEAD_SCAN_PITCH_BOTTOM   = 0.75;    // 스윕 종료 pitch(아래쪽, 더 내려다봄) [rad]
                                                   // 기존 단일 고정값(0.5236rad=30deg)이 이 범위 중앙 부근에 오도록 설정
@@ -474,9 +483,15 @@ int main(int argc, char **argv)
         // 2단계로 나눈다(사용자 확인: 안전 높이에 오른 뒤부터는 그대로 standoff까지 한 번에 가도
         // 됨 - 어차피 그 사이 이동은 y 위주라 대각선 하강 도중 테이블에 걸릴 일이 없음). SAFE_TRANSIT_Z는
         // 테이블 상판(z=1.0)보다 5cm 위로 잡아 상승 시점에는 상판을 확실히 넘어가게 함.
+        // 2026-07-18 (자세 붕괴 방지): 실측(GUI 실행) 결과 이 상승 구간이 x,y 변화 없이 z만 바뀌는
+        // 순수 수직 직선이라, 대기 자세에서 팔을 곧게 편 채로만 올라가 어깨/팔꿈치가 부자연스럽게
+        // 꺾이는 자세가 나옴. SAFE_TRANSIT_FORWARD_X만큼 로봇 정면(+X, world 기준) 쪽으로도 같이
+        // 이동시켜 순수 수직 대신 완만한 대각선 궤적이 되도록 함 - 팔꿈치가 자연스럽게 앞으로
+        // 굽으면서 올라가 특정 자세로 급격히 꺾이는 문제를 줄인다.
         const double SAFE_TRANSIT_Z = 1.05;  // 테이블 상판(z=1.0)보다 위 - 접근 전 안전 이동 높이
-        Vector3d liftoffL(start_L.x(), start_L.y(), SAFE_TRANSIT_Z);
-        Vector3d liftoffR(start_R.x(), start_R.y(), SAFE_TRANSIT_Z);
+        const double SAFE_TRANSIT_FORWARD_X = 0.15;  // 상승과 함께 앞으로 살짝 이동 - 순수 수직 상승 시 자세 붕괴 방지
+        Vector3d liftoffL(start_L.x() + SAFE_TRANSIT_FORWARD_X, start_L.y(), SAFE_TRANSIT_Z);
+        Vector3d liftoffR(start_R.x() + SAFE_TRANSIT_FORWARD_X, start_R.y(), SAFE_TRANSIT_Z);
 
         // 파지 직후 곧바로 파지점->이송목표 대각선 직선으로 이동하면 받침대/바닥 근처를 스치듯 지나갈
         // 수 있다. 스퀴즈를 유지한 채(PHASE_GRASP_TO_PLACE) 먼저 수직으로 LIFT_HEIGHT만큼 들어올린 뒤,
@@ -493,6 +508,14 @@ int main(int argc, char **argv)
         // Cartesian 직선 구간 하나를 만들어 세그먼트 목록에 추가.
         // CartesianLineTrajectory로 6D(L+R) 직선 경로를 만들고, 매 웨이포인트마다 DLS IK를 풀어
         // 관절각 시퀀스로 변환한 뒤, 위치->속도->가속도를 중심차분으로 계산한다 (mode 2 cartesian sim과 동일 방식).
+        // 2026-07-18 (37초 프리징 해결): 실측(GUI 실행) 결과, 전체 파이프라인(약 7개 세그먼트,
+        // 1000Hz 샘플링 기준 도합 수만 개 웨이포인트)에서 웨이포인트마다 DLS IK(최대 300회 반복)를
+        // 매번 새로 푸느라 재생 시작 전에 30초 넘게 멈춰 있었다. dual_arm_function.cpp의
+        // SolveIK_Position/CartesianLineTrajectory 자체(공용 유틸/다른 모드에서도 씀)는 손대지
+        // 않고, 이 안(main.cpp의 웨이포인트->관절각 변환 루프)에서만 IK_SOLVE_STRIDE개 웨이포인트
+        // 마다 한 번만 실제 IK를 풀고, 그 사이 구간은 선형보간으로 채운다 - 1000Hz 결과물(jp)의
+        // 크기/이후 속도·가속도 중심차분 로직은 그대로 유지하면서 IK 호출 횟수만 1/stride로 줄인다.
+        const int IK_SOLVE_STRIDE = 20;  // 20ms마다 한 번 IK, 나머지는 보간 (재생 시작 지연을 수십초 -> 1~2초로 단축)
         auto addCartesianSegment = [&](const Vector3d& sL, const Vector3d& gL,
                                         const Vector3d& sR, const Vector3d& gR, int phase,
                                         double v_des = 0.1) {
@@ -505,15 +528,31 @@ int main(int argc, char **argv)
 
             MatrixXd jp(steps, DoF), jv(steps, DoF), ja(steps, DoF);
 
-            // 1) 매 웨이포인트 IK -> 관절각 시퀀스
-            for (int k = 0; k < steps; k++) {
+            // 1) IK_SOLVE_STRIDE 간격으로만 실제 IK를 풀고(끝점은 항상 포함), 나머지 웨이포인트는
+            //    양쪽 IK 결과 사이를 선형보간해서 채운다.
+            std::vector<int> ik_idx;
+            for (int k = 0; k < steps; k += IK_SOLVE_STRIDE) ik_idx.push_back(k);
+            if (ik_idx.back() != steps - 1) ik_idx.push_back(steps - 1);
+
+            MatrixXd jp_coarse((int)ik_idx.size(), DoF);
+            for (size_t ci = 0; ci < ik_idx.size(); ci++) {
+                int k = ik_idx[ci];
                 Vector3d pL(cart_p(k,0), cart_p(k,1), cart_p(k,2));
                 Vector3d pR(cart_p(k,3), cart_p(k,4), cart_p(k,5));
                 VectorXd q_k;
                 dualarm.SolveIK_Position(model, data, l_EE, r_EE, pL, pR, seed_vec, q_k);
-                for (int i = 0; i < DoF; i++) jp(k, i) = q_k(i);
+                for (int i = 0; i < DoF; i++) jp_coarse((int)ci, i) = q_k(i);
                 seed_vec = q_k;   // 다음 웨이포인트/다음 세그먼트로 시드 연속성 유지
             }
+            for (size_t ci = 0; ci + 1 < ik_idx.size(); ci++) {
+                int k0 = ik_idx[ci], k1 = ik_idx[ci + 1];
+                for (int k = k0; k < k1; k++) {
+                    double alpha = (double)(k - k0) / (double)(k1 - k0);
+                    for (int i = 0; i < DoF; i++)
+                        jp(k, i) = (1.0 - alpha) * jp_coarse((int)ci, i) + alpha * jp_coarse((int)ci + 1, i);
+                }
+            }
+            for (int i = 0; i < DoF; i++) jp(steps - 1, i) = jp_coarse((int)ik_idx.size() - 1, i);
 
             // 2) 중심차분으로 속도 계산 (양 끝단은 전진/후진 차분)
             jv.setZero();

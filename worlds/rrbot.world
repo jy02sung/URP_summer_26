@@ -91,12 +91,22 @@
     -->
 
     <!-- ============================================================================
-         transport_fan_table (11차 수정, 2026-07-18): 사용자가 "물체 밑면과 테이블 최고점이
-         z=1.2"로 지정 - 상판 최고점을 1.0->1.2로 올림(상판 중심 z=0.96->1.16, 두께 0.08은
-         그대로: 1.16+0.04=1.20). 다리도 바닥(z=0)에서 상판 밑면(1.16-0.04=1.12)까지 이어지게
-         높이를 0.92->1.12로 늘리고 중심 z를 0.46->0.56으로 올림(x,y, 다리 두께는 그대로).
-         물체(aruco_box_26)도 같은 커밋에서 z=1.075->1.275로 같이 올림(상판 1.2 + 물체
-         반높이 0.075) - x,y는 여전히 lock된 값이라 변경 없음.
+         transport_fan_table (13차 수정, 2026-07-18): 실측(GUI 실행)으로 place 목표 좌표
+         (0.0823,0.4668)가 테이블 X범위([0.365,0.965], 중심 x=0.665)를 28.5cm나 벗어나
+         허공이었음을 확인 - 물체가 내려놓는 순간 바로 바닥으로 떨어져 넘어짐(실측: 최종 위치
+         (-0.107,0.402,0.075), z=0.075는 바닥에 눕혀진 높이). 사용자가 팔 궤적을 앞으로 살짝
+         뻗도록 바꿨으니(SAFE_TRANSIT_FORWARD_X, main.cpp) 테이블도 로봇 쪽으로 당겨오라고
+         요청 - 중심 x를 0.665->0.55로 되돌림(다리도 동일하게 -0.115: 0.395->0.28,
+         0.935->0.82). y=0, z(높이)는 변경 없음. 새 X범위는 [0.25,0.85].
+
+         place 좌표도 이 테이블 위로 다시 계산해서 옮김(아래 실행 명령 참고: 0.388 0.272 1.075) -
+         반지름 0.474m(기존 pick과 동일 반지름, 검증된 도달 범위)에 각도 35deg로 잡아 테이블
+         안쪽 경계(x=0.25)에서 물체 풋프린트(15cm) 기준 6.3cm 여유를 확보. 기존 place(0.0823,
+         0.4668, +80deg)보다 waist swing이 작아지지만(각도 자체는 사용자가 이번에 좌표 수정을
+         명시적으로 허용함), 물체가 실제로 상판 위에 안착하는 것이 우선.
+
+         이번 X이동으로 pick 좌표(0.45,-0.15)의 테이블 안쪽 여유도 같이 좋아짐(기존 1cm ->
+         12.5cm) - 부수 효과.
 
          main.cpp/urdf 등 제어 로직은 이번에도 전혀 건드리지 않음 - 순수 world 파일 시각적
          모델링. 실행 시 반드시 `source /home/jungmin/friend_ws_88pct/devel/setup.bash`를
@@ -106,16 +116,16 @@
       <static>true</static>
       <pose>0 0 0 0 0 0</pose>
       <link name="link">
-        <collision name="top_plate_collision"><pose>0.665 0.0 0.96 0 0 0</pose><geometry><box><size>0.6 1.4 0.08</size></box></geometry></collision>
-        <visual name="top_plate_visual"><pose>0.665 0.0 0.96 0 0 0</pose><geometry><box><size>0.6 1.4 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="leg_0_collision"><pose>0.395 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
-        <visual name="leg_0_visual"><pose>0.395 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="leg_1_collision"><pose>0.395 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
-        <visual name="leg_1_visual"><pose>0.395 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="leg_2_collision"><pose>0.935 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
-        <visual name="leg_2_visual"><pose>0.935 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
-        <collision name="leg_3_collision"><pose>0.935 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
-        <visual name="leg_3_visual"><pose>0.935 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_plate_collision"><pose>0.55 0.0 0.96 0 0 0</pose><geometry><box><size>0.6 1.4 0.08</size></box></geometry></collision>
+        <visual name="top_plate_visual"><pose>0.55 0.0 0.96 0 0 0</pose><geometry><box><size>0.6 1.4 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_0_collision"><pose>0.28 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
+        <visual name="leg_0_visual"><pose>0.28 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_1_collision"><pose>0.28 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
+        <visual name="leg_1_visual"><pose>0.28 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_2_collision"><pose>0.82 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
+        <visual name="leg_2_visual"><pose>0.82 -0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_3_collision"><pose>0.82 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry></collision>
+        <visual name="leg_3_visual"><pose>0.82 0.67 0.46 0 0 0</pose><geometry><box><size>0.06 0.06 0.92</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
       </link>
     </model>
 
