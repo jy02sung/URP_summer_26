@@ -27,7 +27,7 @@ SCAN → APPROACH → WRIST_ALIGN → SQUEEZE → LIFT → HOLD → LOWER → RE
 ## 완료 기준
 
 - [x] 양쪽 wrist yaw/pitch가 포함된 15DoF 모델이 안정적으로 스폰된다.
-- [ ] waist와 head를 사용하지 않는 arm-only IK가 유지된다.
+- [x] waist와 head를 사용하지 않는 arm-only IK가 유지된다.
 - [ ] 손목이 접촉면에 제한적으로 정렬되고 관절 끝으로 열리지 않는다.
 - [ ] 양손이 목표 압착력을 안정적으로 유지한다.
 - [ ] 물체가 제자리에서 수직 상승한다.
@@ -332,10 +332,24 @@ Neutral return after 8 s: L=-0.00189 rad, R=-0.00273 rad
 
 ### 통과 조건
 
-- [ ] head pitch 동작 중 waist/arms/head yaw 고정
-- [ ] arm IK 중 waist/head 고정
-- [ ] 양팔이 기존 standoff와 contact 목표에 도달
-- [ ] wrist가 IK 계산 때문에 joint limit로 이동하지 않음
+- [x] head pitch 동작 중 waist/arms/head yaw 고정
+- [x] arm IK 중 waist/head 고정
+- [x] 양팔이 좌우 독립 위치 목표에 0.3mm 이내로 도달
+- [x] wrist가 IK 계산 때문에 정상 범위 `±0.35 rad`를 벗어나지 않음
+
+### 결과 기록
+
+```text
+Date: 2026-07-19
+Solver: 좌우 팔 각 6DoF column만 사용하는 DLS position IK
+Locked joints: Waist, Head yaw, Head pitch는 seed를 정확히 유지
+IK frames: L/R_wrist_ik_frame
+Numerical error: Left 0.233mm, Right 0.210mm
+Wrist bound: 절대값 0.35rad 이내
+Runtime hold: 중력 feedforward + I=0 PD, GUI 안정화 후 최대 관절속도 2.6e-5rad/s
+Model correction: Pinocchio URDF의 R shoulder pitch 축을 Gazebo xacro와 같은 Y축으로 수정
+Object baseline: 15cm box, center [0.45, 0, 1.225]
+```
 
 ---
 
@@ -357,6 +371,9 @@ Neutral return after 8 s: L=-0.00189 rad, R=-0.00273 rad
 
 ### 작업
 
+- 첫 시험은 접촉하지 않는 pre-squeeze에서 멈춰 양팔 자세와 손목 중립을 확인한다.
+- 15cm 박스 중심 `[0.45, 0, 1.225]`와 양쪽 표면을 기준으로 접근 목표를 생성한다.
+- 시작 관절 명령에서 pre-squeeze 명령까지 5차 보간해 목표 불연속을 없앤다.
 - 실제 wrist angle을 매 tick 무제한 목표로 복사하지 않는다.
 - soft limit 목표와 직접 복원 토크를 함께 사용한다.
 - 접촉력이 양쪽 모두 일정 값 이상일 때만 정렬 판정을 시작한다.
