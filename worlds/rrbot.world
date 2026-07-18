@@ -32,64 +32,48 @@
 
     <!-- Graspable pick object: 15x15x15cm box with a 5cm ArUco id=26 marker facing the head
          camera. dynamic(model.sdf) - held by real friction/impedance grasp, not kinematic attach.
-         2026-07-18: pick XY moved to (0.2113,-0.4532) (radius 0.50, angle -65deg from torso axis)
-         so that, paired with the new transport_fan_table place target (0.2113,+0.4532, +65deg),
-         whole-body IK is forced to recruit ~93deg of Waist_joint swing (joint limit is +-0.87rad
-         = +-49.85deg = 99.7deg total, so this leaves ~7deg of margin, not saturated at the hard
-         limit). Z raised from 1.225 to 1.275 = new table top(1.20) + half box height(0.075), so
-         the box still rests exactly flush on the new table surface (matches the old
-         pick_pedestal(1.15 top)+1.225 relationship 1:1, just retargeted to 1.20/1.275). -->
+         2026-07-18 (2차 수정): 최초 시도(pick -65deg/place +65deg, 대칭 130deg)는 waist
+         92.6deg를 얻었지만 Stage 3 headless 검증 중 발견 - main.cpp의 HEAD_SCAN_YAW/PITCH가
+         고정 단일 스캔 자세(yaw=0deg)라 카메라 시야(horizontal_fov 60deg, 약 +-30deg)를 벗어난
+         물체는 애초에 ArUco로 못 찾는다(제어 로직은 절대 수정하지 않기로 함). pick을 카메라
+         시야 경계(-29deg, 기존 원본 위치 -18.4deg보다 조금 더 밀어붙인 값)에 묶어두면 waist
+         범위(+-0.87rad=+-49.85deg)가 place 쪽에서 하드리밋에 막혀 스윙이 61~68deg 선에서
+         꺾인다는 것도 pinocchio 스캔(반지름/각도 여러 조합)으로 재확인함 - 90deg는 이 제약 하에서
+         물리적으로 불가능. 사용자에게 확인 후 "68deg로 타협, 제어 로직 무수정" 선택받아 pick을
+         (0.4146,-0.2298)(반지름 0.474, -29deg, 카메라 시야 경계)로, place를 (0.0823,0.4668)
+         (반지름 0.474, +80deg, waist 하드리밋 +49.85deg 직전)으로 재배치 - 실측 waist swing
+         68.8deg, IK 수렴 잔차 최대 8.4cm(place 도달 지점에서 최대, 안전 버퍼에 반영). Z는
+         1.225->1.275로 유지(신규 fan table 상판 z=1.20 + 박스 반높이 0.075). -->
     <include>
       <uri>model://aruco_box_26</uri>
       <name>aruco_box_26</name>
-      <pose>0.2113 -0.4532 1.275 0 0 0</pose>
+      <pose>0.4146 -0.2298 1.275 0 0 0</pose>
     </include>
 
-    <!-- pick 지점 전용 소형 받침대: 물체 발판(15x15cm)보다 살짝 큰 17x17cm, 상판 z=1.15(기존 테이블
-         높이와 동일). 파지 전(LOCATE+APPROACH) 동안만 물체를 떠받치는 용도 - 팔은 물체 바로 위/옆으로만
-         접근하므로 이 작은 받침대와 충돌할 일이 없다. -->
-    <model name="pick_pedestal">
-      <static>true</static>
-      <pose>0.45 -0.15 1.10 0 0 0</pose>
-      <link name="link">
-        <collision name="collision">
-          <geometry>
-            <box><size>0.17 0.17 0.10</size></box>
-          </geometry>
-        </collision>
-        <visual name="visual">
-          <geometry>
-            <box><size>0.17 0.17 0.10</size></box>
-          </geometry>
-          <material>
-            <ambient>0.4 0.4 0.4 1</ambient>
-            <diffuse>0.4 0.4 0.4 1</diffuse>
-          </material>
-        </visual>
-      </link>
-    </model>
-    <!-- 2026-07-18: 위 pick_pedestal은 새 pick 좌표(0.2113,-0.4532)와 더 이상 겹치지 않는다 - 사용자
-         요청으로 일단 그대로 남겨둠(제거하지 않음). 실제 pick/place 지지는 아래 transport_fan_table이
-         전담한다. -->
+    <!-- 2026-07-18: 구 pick_pedestal(0.45,-0.15, 상판 z=1.15, 17x17cm)은 새 pick 좌표
+         (0.4146,-0.2298)와 반지름은 같고 각도만 10.6deg 차이라 XY상 거의 완전히 겹친다(더 이상
+         "안 겹치니 그냥 둔다"고 할 수 없는 수준) - 게다가 높이도 다르다(1.15 vs 신규 1.20)라 두
+         정적 솔리드가 서로 침투(z-fighting)하는 시각적 문제가 생겨 제거함. pick 지지는 아래
+         transport_fan_table의 pick_pad가 전담. -->
 
     <!-- ============================================================================
          transport_fan_table: 허리(Waist_joint)가 크게 회전하는 모습을 보여주기 위한 시각화용
-         탁자. pick=(0.2113,-0.4532), place=(0.2113,+0.4532) (torso 축 기준 반지름 0.50m,
-         각각 -65/+65deg, 총 130deg 배치) - pinocchio로 main.cpp의 SolveIK_Position(DLS+
-         null-space, lambda=0.1)을 그대로 재현해 스캔한 결과 Waist_joint가 실측 약 92.6deg
-         회전한다(관절 한계 +-0.87rad=99.7deg total 이내, 하드리밋에서 ~7deg 여유). main.cpp/
-         urdf 등 제어 로직은 전혀 건드리지 않음 - 순수 world 파일의 시각적 모델링.
+         탁자. pick=(0.4146,-0.2298, -29deg, 카메라 스캔 시야 경계), place=(0.0823,0.4668,
+         +80deg, waist 하드리밋 직전) - 둘 다 torso 축 기준 반지름 0.474m. main.cpp의
+         SolveIK_Position(DLS+null-space, lambda=0.1)을 pinocchio로 그대로 재현해 스캔한 결과
+         Waist_joint가 실측 약 68.8deg 회전(관절 하드리밋 +-0.87rad=99.7deg 중 place 쪽에서
+         +0.87rad에 정확히 도달 - 이게 스윙의 물리적 상한, 더 큰 스윙은 이 pick 위치에서는
+         불가능함을 여러 반지름/각도 조합으로 확인). main.cpp/urdf 등 제어 로직은 전혀 건드리지
+         않음 - 순수 world 파일의 시각적 모델링.
 
-         안전 마진 산정: 이 스윙 폭에서 SolveIK_Position을 pinocchio로 재현해보니 수렴 잔차가
-         최대 ~6cm까지 발생함을 확인(300~5000 iteration 모두 동일값에 수렴 - 반복횟수 부족이
-         아니라 damped pseudo-inverse가 완전한 직교투영이 아니어서 태스크 방향으로 새는 것이
-         원인이라는 dual_arm_function.cpp 자체 주석과 일치. 기존 소폭 스윙에서 이미 알려진
-         현상이었으나 이번처럼 큰 스윙에서는 그 잔차가 더 커짐). 기존에 합의한 ArUco 인식오차
-         버퍼(3~5cm, place 지점은 ArUco를 안 쓰므로 무관)에 더해, 이 IK 잔차까지 감안해 상판
-         안쪽 경계를 반지름 0.42m로 제한(실제 스윙 반경 0.50m 대비 8cm 여유 + pick/place 지점
-         자체는 원래 그 높이(1.275, 상판보다 7.5cm 위)에서 접근하도록 설계돼 있어 별도 안전) -
-         본체를 일부러 안쪽으로 당겨 좁혀두고, pick/place 지점에만 지름 26cm 원형 받침(pad)을
-         내밀어 물체를 지지한다(반지름 0.50 지점, 본체 바깥쪽 경계 0.42와 5cm 겹쳐 하나로
+         안전 마진 산정: 이 스캔에서 IK 수렴 잔차가 최대 ~8.4cm까지 발생함을 확인(반복횟수를
+         늘려도 잔차 불변 - dual_arm_function.cpp 자체 주석의 "damped pseudo-inverse가 완전한
+         직교투영이 아니라 태스크 방향으로 샌다"는 현상과 일치, waist가 하드리밋에 눌린 채로
+         목표에 못 미치는 구성이라 1차 시도(6cm)보다 더 큼). 기존 ArUco 인식오차 버퍼(3~5cm,
+         place 지점은 ArUco 미사용이라 무관)보다 이 IK 잔차가 더 커서, 상판 안쪽 경계를 반지름
+         0.354m로 제한(실제 스윙 반경 0.474m 대비 12cm 여유) - 본체를 스윙 반경보다 상당히
+         안쪽으로 당겨두고, pick/place 지점에만 지름 26cm 원형 받침(pad)을 반지름 0.474 지점까지
+         내밀어 물체를 지지한다(본체 바깥쪽 경계 0.354와 pad 안쪽 경계 0.344가 1cm 겹쳐 하나로
          이어짐 - 단일 상판 요건 충족).
 
          주의: 이 계산은 로봇의 유휴(idle) 자세를 정확히 몰라 근사값(q_pref 자세)으로 대체한
@@ -99,42 +83,38 @@
       <static>true</static>
       <pose>0 0 0 0 0 0</pose>
       <link name="link">
-        <collision name="fan_seg_0_collision"><pose>0.1186 -0.2864 1.1600 0 0 -1.1781</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_0_visual"><pose>0.1186 -0.2864 1.1600 0 0 -1.1781</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_1_collision"><pose>0.1620 -0.2643 1.1600 0 0 -1.0210</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_1_visual"><pose>0.1620 -0.2643 1.1600 0 0 -1.0210</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_2_collision"><pose>0.2013 -0.2357 1.1600 0 0 -0.8639</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_2_visual"><pose>0.2013 -0.2357 1.1600 0 0 -0.8639</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_3_collision"><pose>0.2357 -0.2013 1.1600 0 0 -0.7069</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_3_visual"><pose>0.2357 -0.2013 1.1600 0 0 -0.7069</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_4_collision"><pose>0.2643 -0.1620 1.1600 0 0 -0.5498</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_4_visual"><pose>0.2643 -0.1620 1.1600 0 0 -0.5498</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_5_collision"><pose>0.2864 -0.1186 1.1600 0 0 -0.3927</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_5_visual"><pose>0.2864 -0.1186 1.1600 0 0 -0.3927</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_6_collision"><pose>0.3014 -0.0724 1.1600 0 0 -0.2356</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_6_visual"><pose>0.3014 -0.0724 1.1600 0 0 -0.2356</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_7_collision"><pose>0.3090 -0.0243 1.1600 0 0 -0.0785</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_7_visual"><pose>0.3090 -0.0243 1.1600 0 0 -0.0785</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_8_collision"><pose>0.3090 0.0243 1.1600 0 0 0.0785</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_8_visual"><pose>0.3090 0.0243 1.1600 0 0 0.0785</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_9_collision"><pose>0.3014 0.0724 1.1600 0 0 0.2356</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_9_visual"><pose>0.3014 0.0724 1.1600 0 0 0.2356</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_10_collision"><pose>0.2864 0.1186 1.1600 0 0 0.3927</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_10_visual"><pose>0.2864 0.1186 1.1600 0 0 0.3927</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_11_collision"><pose>0.2643 0.1620 1.1600 0 0 0.5498</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_11_visual"><pose>0.2643 0.1620 1.1600 0 0 0.5498</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_12_collision"><pose>0.2357 0.2013 1.1600 0 0 0.7069</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_12_visual"><pose>0.2357 0.2013 1.1600 0 0 0.7069</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_13_collision"><pose>0.2013 0.2357 1.1600 0 0 0.8639</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_13_visual"><pose>0.2013 0.2357 1.1600 0 0 0.8639</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_14_collision"><pose>0.1620 0.2643 1.1600 0 0 1.0210</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_14_visual"><pose>0.1620 0.2643 1.1600 0 0 1.0210</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_15_collision"><pose>0.1186 0.2864 1.1600 0 0 1.1781</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_15_visual"><pose>0.1186 0.2864 1.1600 0 0 1.1781</pose><geometry><box><size>0.0559 0.2200 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="pick_pad_collision"><pose>0.2113 -0.4532 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry></collision>
-        <visual name="pick_pad_visual"><pose>0.2113 -0.4532 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="place_pad_collision"><pose>0.2113 0.4532 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry></collision>
-        <visual name="place_pad_visual"><pose>0.2113 0.4532 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_0_collision"><pose>0.2448 -0.1296 1.1600 0 0 -0.4868</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_0_visual"><pose>0.2448 -0.1296 1.1600 0 0 -0.4868</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_1_collision"><pose>0.2608 -0.0933 1.1600 0 0 -0.3435</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_1_visual"><pose>0.2608 -0.0933 1.1600 0 0 -0.3435</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_2_collision"><pose>0.2715 -0.0551 1.1600 0 0 -0.2001</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_2_visual"><pose>0.2715 -0.0551 1.1600 0 0 -0.2001</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_3_collision"><pose>0.2766 -0.0157 1.1600 0 0 -0.0567</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_3_visual"><pose>0.2766 -0.0157 1.1600 0 0 -0.0567</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_4_collision"><pose>0.2760 0.0240 1.1600 0 0 0.0866</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_4_visual"><pose>0.2760 0.0240 1.1600 0 0 0.0866</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_5_collision"><pose>0.2697 0.0632 1.1600 0 0 0.2300</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_5_visual"><pose>0.2697 0.0632 1.1600 0 0 0.2300</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_6_collision"><pose>0.2579 0.1010 1.1600 0 0 0.3734</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_6_visual"><pose>0.2579 0.1010 1.1600 0 0 0.3734</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_7_collision"><pose>0.2408 0.1369 1.1600 0 0 0.5167</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_7_visual"><pose>0.2408 0.1369 1.1600 0 0 0.5167</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_8_collision"><pose>0.2188 0.1699 1.1600 0 0 0.6601</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_8_visual"><pose>0.2188 0.1699 1.1600 0 0 0.6601</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_9_collision"><pose>0.1923 0.1994 1.1600 0 0 0.8035</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_9_visual"><pose>0.1923 0.1994 1.1600 0 0 0.8035</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_10_collision"><pose>0.1618 0.2248 1.1600 0 0 0.9468</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_10_visual"><pose>0.1618 0.2248 1.1600 0 0 0.9468</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_11_collision"><pose>0.1281 0.2456 1.1600 0 0 1.0902</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_11_visual"><pose>0.1281 0.2456 1.1600 0 0 1.0902</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_12_collision"><pose>0.0917 0.2614 1.1600 0 0 1.2336</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_12_visual"><pose>0.0917 0.2614 1.1600 0 0 1.2336</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="fan_seg_13_collision"><pose>0.0534 0.2718 1.1600 0 0 1.3769</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry></collision>
+        <visual name="fan_seg_13_visual"><pose>0.0534 0.2718 1.1600 0 0 1.3769</pose><geometry><box><size>0.0456 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="pick_pad_collision"><pose>0.4146 -0.2298 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry></collision>
+        <visual name="pick_pad_visual"><pose>0.4146 -0.2298 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="place_pad_collision"><pose>0.0823 0.4668 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry></collision>
+        <visual name="place_pad_visual"><pose>0.0823 0.4668 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
       </link>
     </model>
 
