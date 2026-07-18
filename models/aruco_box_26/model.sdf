@@ -1,28 +1,28 @@
 <?xml version="1.0"?>
 <sdf version="1.6">
   <model name="aruco_box_26">
-    <!-- dynamic: 양팔이 y축 양쪽에서 표면 안쪽 5mm를 스퀴즈(grasp_offset, main.cpp)한 상태로
+    <!-- dynamic: 양팔이 y축 양쪽에서 표면 안쪽을 스퀴즈(grasp_offset, main.cpp)한 상태로
          PHASE_GRASP_TO_PLACE 구간에서 임피던스 제어(가상 스프링-댐퍼, F/T 센서 피드백)를 유지하면
          마찰(mu=1.2)로 실제 접촉 파지가 이루어진다. 더 이상 pose를 강제로 갱신하지 않는다. -->
     <static>false</static>
     <link name="link">
       <inertial>
         <mass>0.2</mass>
-        <!-- solid cube, side 0.1m: ixx=iyy=izz = (1/6)*m*s^2 -->
+        <!-- solid cube, side 0.15m: ixx=iyy=izz = (1/6)*m*s^2 -->
         <inertia>
-          <ixx>0.000333</ixx>
+          <ixx>0.00075</ixx>
           <ixy>0</ixy>
           <ixz>0</ixz>
-          <iyy>0.000333</iyy>
+          <iyy>0.00075</iyy>
           <iyz>0</iyz>
-          <izz>0.000333</izz>
+          <izz>0.00075</izz>
         </inertia>
       </inertial>
 
       <collision name="collision">
         <geometry>
           <box>
-            <size>0.1 0.1 0.1</size>
+            <size>0.15 0.15 0.15</size>
           </box>
         </geometry>
         <surface>
@@ -38,7 +38,7 @@
       <visual name="visual_box">
         <geometry>
           <box>
-            <size>0.1 0.1 0.1</size>
+            <size>0.15 0.15 0.15</size>
           </box>
         </geometry>
         <material>
@@ -51,7 +51,7 @@
            when this box is placed at a larger world-x than the camera).
            Reuses the aruco_marker_26 model's texture/material. -->
       <visual name="visual_marker_26">
-        <pose>-0.0505 0 0 0 0 0</pose>
+        <pose>-0.0755 0 0 0 0 0</pose>
         <geometry>
           <box>
             <size>0.001 0.05 0.05</size>
