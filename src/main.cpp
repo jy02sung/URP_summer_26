@@ -516,9 +516,23 @@ int main(int argc, char **argv)
         // 마다 한 번만 실제 IK를 풀고, 그 사이 구간은 선형보간으로 채운다 - 1000Hz 결과물(jp)의
         // 크기/이후 속도·가속도 중심차분 로직은 그대로 유지하면서 IK 호출 횟수만 1/stride로 줄인다.
         const int IK_SOLVE_STRIDE = 20;  // 20ms마다 한 번 IK, 나머지는 보간 (재생 시작 지연을 수십초 -> 1~2초로 단축)
+
+        // 2026-07-18 (머리로 물체 추적): 파지 전/파지 후 이동 내내 pL,pR의 중점(=물체가 손에 들려
+        // 있으면 정확히 물체 중심, 파지 전이면 목표 접근점 중심)을 바라보도록 head yaw를 매 웨이포인트
+        // 재계산한다. Head_yaw_joint는 waist(Waist_joint) 기준 로컬 회전이라, world 기준 목표 방위각
+        // (atan2)에서 그 순간의 waist 각도(q_k(0))를 빼야 실제로 world상 같은 지점을 계속 본다(waist가
+        // 돌아가는 동안에도 머리가 목표에서 벗어나지 않음). pitch는 카메라 마운트 오프셋 보정 없이
+        // 매 순간 재계산하면 오히려 부정확해질 수 있어, 스캔이 이미 검증한 값(scan_q[2])을 그대로 쓴다.
+        // track_head=false로 부르면 정면(0,0)으로 고정 - 복귀 마지막 구간에 사용.
+        auto headLookAt = [&](const Vector3d& pL, const Vector3d& pR, double waist_angle) {
+            Vector3d target = 0.5 * (pL + pR);
+            double world_bearing = std::atan2(target.y(), target.x());
+            return world_bearing - waist_angle;
+        };
+
         auto addCartesianSegment = [&](const Vector3d& sL, const Vector3d& gL,
                                         const Vector3d& sR, const Vector3d& gR, int phase,
-                                        double v_des = 0.1) {
+                                        double v_des = 0.1, bool track_head = true) {
             MatrixXd cart_p, cart_v, cart_a;
             dualarm.CartesianLineTrajectory(sL, gL, sR, gR, cart_p, cart_v, cart_a, v_des);
             int steps = cart_p.rows();
@@ -541,6 +555,13 @@ int main(int argc, char **argv)
                 Vector3d pR(cart_p(k,3), cart_p(k,4), cart_p(k,5));
                 VectorXd q_k;
                 dualarm.SolveIK_Position(model, data, l_EE, r_EE, pL, pR, seed_vec, q_k);
+                if (track_head) {
+                    q_k(1) = headLookAt(pL, pR, q_k(0));  // head yaw: 물체 중점을 world 기준으로 계속 바라봄
+                    q_k(2) = scan_q[2];                    // head pitch: 스캔이 확정한 값 유지
+                } else {
+                    q_k(1) = 0.0;  // 정면(yaw=0)
+                    q_k(2) = 0.0;  // 정면(pitch=0)
+                }
                 for (int i = 0; i < DoF; i++) jp_coarse((int)ci, i) = q_k(i);
                 seed_vec = q_k;   // 다음 웨이포인트/다음 세그먼트로 시드 연속성 유지
             }
@@ -611,8 +632,15 @@ int main(int argc, char **argv)
         Vector3d retreatR = transportR - retreat_dir;
         addCartesianSegment(transportL, retreatL, transportR, retreatR, PHASE_RETURN);
 
-        // 3c) 복귀: 후퇴 지점에서 원래 대기 자세로.
-        addCartesianSegment(retreatL, start_L, retreatR, start_R, PHASE_RETURN);
+        // 3c) 테이블 이탈: 후퇴 지점(테이블 위, z~1.075)에서 곧장 대기 자세로 대각선으로 가면
+        // 갈 때와 대칭적으로 테이블 위를 스치듯 지나갈 위험이 있다(0)/0b)와 동일한 문제). 그래서
+        // liftoffL/R(갈 때 썼던 안전 높이 경유점)을 재사용해 높이를 유지한 채 먼저 테이블을
+        // 빠져나가고, 그다음(3d)에야 원래 자세로 내려간다.
+        addCartesianSegment(retreatL, liftoffL, retreatR, liftoffR, PHASE_RETURN);
+
+        // 3d) 복귀: 테이블을 벗어난 안전 지점에서 원래 대기 자세로. 여기서부터는 물체도 이미
+        // 내려놓았고 카메라로 추적할 대상이 없으므로 머리를 정면(0,0)으로 되돌린다(track_head=false).
+        addCartesianSegment(liftoffL, start_L, liftoffR, start_R, PHASE_RETURN, 0.1, false);
 
         ROS_INFO("Vision pick(dual-arm): object(world)=[%.3f %.3f %.3f], transport=[%.3f %.3f %.3f]",
                  obj.x(), obj.y(), obj.z(),
