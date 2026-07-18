@@ -463,6 +463,18 @@ int main(int argc, char **argv)
         Vector3d standoffL = objL + standoff_dir;
         Vector3d standoffR = objR - standoff_dir;
 
+        // 2026-07-18: transport_fan_table이 옛 받침대(17x17cm)보다 훨씬 큰 단일 상판(0.6x1.4m)으로
+        // 바뀌면서, 대기 자세(start_L/R)에서 standoffL/R로 곧장 가는 대각선 직선이 테이블 상판
+        // 위를 스치듯 지나가 걸리는 문제가 발생함(STANDOFF_Y는 옛 받침대 기준 클리어런스라 지금
+        // 넓은 테이블에는 부족). 그래서 이 구간을 대각선 1개 대신 "제자리에서 안전 높이로 상승 ->
+        // 그 높이에서 수평 이동 -> standoff 높이로 하강" 3단계로 나눈다. SAFE_TRANSIT_Z는 테이블
+        // 상판(z=1.0)보다 5cm 위로 잡아 상판을 확실히 넘어가게 함.
+        const double SAFE_TRANSIT_Z = 1.05;  // 테이블 상판(z=1.0)보다 위 - 접근 전 안전 이동 높이
+        Vector3d liftoffL(start_L.x(), start_L.y(), SAFE_TRANSIT_Z);
+        Vector3d liftoffR(start_R.x(), start_R.y(), SAFE_TRANSIT_Z);
+        Vector3d transitL(standoffL.x(), standoffL.y(), SAFE_TRANSIT_Z);
+        Vector3d transitR(standoffR.x(), standoffR.y(), SAFE_TRANSIT_Z);
+
         // 파지 직후 곧바로 파지점->이송목표 대각선 직선으로 이동하면 받침대/바닥 근처를 스치듯 지나갈
         // 수 있다. 스퀴즈를 유지한 채(PHASE_GRASP_TO_PLACE) 먼저 수직으로 LIFT_HEIGHT만큼 들어올린 뒤,
         // 그 높이에서 이송목표로 이동한다.
@@ -525,8 +537,14 @@ int main(int argc, char **argv)
         };
 
         // ===== 전체 동작 순서 =====
-        // 1) 팔을 물체 옆 standoff 지점(파지 높이 유지, 받침대 바깥쪽)으로 이동
-        addCartesianSegment(start_L, standoffL, start_R, standoffR, PHASE_APPROACH);
+        // 0) 대기 자세에서 제자리(x,y 그대로) 안전 높이(SAFE_TRANSIT_Z)까지 수직 상승
+        addCartesianSegment(start_L, liftoffL, start_R, liftoffR, PHASE_APPROACH);
+
+        // 0b) 안전 높이를 유지한 채 standoff의 x,y 위로 수평 이동 (테이블 상판 위를 여유 있게 통과)
+        addCartesianSegment(liftoffL, transitL, liftoffR, transitR, PHASE_APPROACH);
+
+        // 0c) standoff 높이(파지 높이 유지)까지 수직 하강
+        addCartesianSegment(transitL, standoffL, transitR, standoffR, PHASE_APPROACH);
 
         // 1b) standoff -> 파지 위치로 y 방향 직선 접근 (파지 높이를 그대로 유지하므로 받침대와 부딪히지 않음)
         // objL/R은 이미 박스 표면 안쪽(grasp_offset 침투)까지를 목표로 하므로, 기본 속도(0.1m/s)로
