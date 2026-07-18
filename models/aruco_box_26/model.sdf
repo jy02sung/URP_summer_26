@@ -47,14 +47,18 @@
         </material>
       </visual>
 
-      <!-- 5cm ArUco id=26 marker patch, centered on the -X face (faces the head camera
-           when this box is placed at a larger world-x than the camera).
+      <!-- 5cm ArUco id=26 marker patch, centered on the +Z face (top face, faces straight up).
+           2026-07-18: moved here from the -X side face - the head camera looks DOWN at the
+           object (Head_pitch tilts forward/down per main.cpp's pitch-sweep scan), so a
+           top-facing marker is what the downward-looking camera actually sees, regardless of
+           which way the box is yawed on the table. The old -X side-facing marker only worked
+           by coincidence of a specific box/camera yaw alignment.
            Reuses the aruco_marker_26 model's texture/material. -->
       <visual name="visual_marker_26">
-        <pose>-0.0755 0 0 0 0 0</pose>
+        <pose>0 0 0.0755 0 0 0</pose>
         <geometry>
           <box>
-            <size>0.001 0.05 0.05</size>
+            <size>0.05 0.05 0.001</size>
           </box>
         </geometry>
         <material>
