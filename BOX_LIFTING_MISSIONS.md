@@ -393,12 +393,15 @@ Date: 2026-07-19
 Box: center [0.45, 0, 1.225], size 0.15m
 Targets: Left [0.45, +0.095, 1.225], Right [0.45, -0.095, 1.225]
 Clearance: 각 박스 표면에서 20mm, 접촉/힘 제어 비활성
+Architecture: 팔당 shoulder/elbow 4DoF로 위치 3DoF, 남는 1DoF는 null-space 팔꿈치 자세
+Wrist policy: yaw/pitch는 IK에서 0rad 중립 고정, squeeze 시 제한 순응용으로 예약
 Trajectory: 실제 현재 관절각에서 25s 5차 보간, gravity PD target으로 100Hz 전송
-IK error: Left 0.038mm, Right 0.037mm
-IK wrist max: 0.173rad
-Measured peak velocity: 0.0434rad/s
-Settled peak velocity: 4.9e-5rad/s
-Result: 양손 pre-squeeze 목표에서 안정적으로 정지
+Numerical grip error: Left 0.051mm, Right 0.048mm
+Actual grip pose after settling: Left [0.450, 0.095, 1.225], Right [0.451, -0.095, 1.226]
+Actual height difference: about 1mm
+Measured peak velocity: 0.194rad/s
+Settled peak velocity: below 7e-6rad/s
+Result: 손목 자유도를 소비하지 않고 양손 pre-squeeze 위치에 안정적으로 정지
 ```
 
 ---

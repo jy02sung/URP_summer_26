@@ -221,6 +221,10 @@ class DualArmControl
                               pinocchio::FrameIndex l_EE, pinocchio::FrameIndex r_EE,
                               const Vector3d& target_L, const Vector3d& target_R,
                               const VectorXd& q_seed, VectorXd& q_out);
+        void SolveIK_Arm4_Position(pinocchio::Model& model, pinocchio::Data& data,
+                                   pinocchio::FrameIndex l_frame, pinocchio::FrameIndex r_frame,
+                                   const Vector3d& target_L, const Vector3d& target_R,
+                                   const VectorXd& q_seed, VectorXd& q_out);
 
         // === 추가: 직교 공간 직선 궤적 생성 ===
         // 시작 EE 위치(start)에서 목표 EE 위치(goal)까지 5차 시간 스케일링으로 직선 보간.

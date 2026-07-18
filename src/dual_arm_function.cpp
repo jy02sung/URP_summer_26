@@ -296,6 +296,45 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
     q_out = q;
 }
 
+// Mission 5 architecture: shoulder/elbow 4DoF per arm solve only grip position (3DoF).
+// The remaining arm null-space DoF keeps a bent elbow posture, while both wrist DoFs
+// stay neutral here and are reserved for bounded force-driven compliance during squeeze.
+void DualArmControl::SolveIK_Arm4_Position(pinocchio::Model& model, pinocchio::Data& data,
+                                           pinocchio::FrameIndex l_frame, pinocchio::FrameIndex r_frame,
+                                           const Vector3d& target_L, const Vector3d& target_R,
+                                           const VectorXd& q_seed, VectorXd& q_out)
+{
+    constexpr double lambda=0.05,step=0.5,posture_gain=0.003;
+    VectorXd q=q_seed;
+    for(const int i:{7,8,13,14})q(i)=0.0;
+    VectorXd preferred=q;
+    preferred(3)=-0.55; preferred(4)=0.20; preferred(5)=-0.15; preferred(6)=-1.25;
+    preferred(9)=-0.55; preferred(10)=-0.20; preferred(11)=0.15; preferred(12)=-1.25;
+
+    for(int iter=0;iter<600;++iter){
+        pinocchio::forwardKinematics(model,data,q);
+        pinocchio::computeJointJacobians(model,data,q);
+        pinocchio::updateFramePlacements(model,data);
+        VectorXd e(6);e.head<3>()=target_L-data.oMf[l_frame].translation();e.tail<3>()=target_R-data.oMf[r_frame].translation();
+        if(e.norm()<1e-4)break;
+        pinocchio::Data::Matrix6x JL(6,model.nv); JL.setZero();
+        pinocchio::Data::Matrix6x JR(6,model.nv); JR.setZero();
+        pinocchio::getFrameJacobian(model,data,l_frame,pinocchio::LOCAL_WORLD_ALIGNED,JL);
+        pinocchio::getFrameJacobian(model,data,r_frame,pinocchio::LOCAL_WORLD_ALIGNED,JR);
+        MatrixXd J=MatrixXd::Zero(6,8);J.block(0,0,3,4)=JL.block(0,3,3,4);J.block(3,4,3,4)=JR.block(0,9,3,4);
+        MatrixXd pinv=J.transpose()*(J*J.transpose()+lambda*lambda*MatrixXd::Identity(6,6)).ldlt().solve(MatrixXd::Identity(6,6));
+        VectorXd dq=pinv*e;
+        VectorXd posture(8);posture.head<4>()=preferred.segment<4>(3)-q.segment<4>(3);posture.tail<4>()=preferred.segment<4>(9)-q.segment<4>(9);
+        dq+=(MatrixXd::Identity(8,8)-pinv*J)*(posture_gain*posture);
+        q.segment<4>(3)+=step*dq.head<4>();q.segment<4>(9)+=step*dq.tail<4>();
+        q.head<3>()=q_seed.head<3>();
+        for(int i=0;i<model.nq;++i)
+            q(i)=std::min(std::max(q(i),model.lowerPositionLimit(i)),model.upperPositionLimit(i));
+        for(const int i:{7,8,13,14})q(i)=0.0;
+    }
+    q.head<3>()=q_seed.head<3>();q_out=q;
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////
 //------------------------------ Cartesian Line Trajectory -------------------------------//
 ////////////////////////////////////////////////////////////////////////////////////////////

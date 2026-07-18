@@ -17,7 +17,10 @@ int main(int argc, char** argv) {
     pinocchio::Data data(model);
     const auto left_frame = model.getFrameId("L_wrist_ik_frame");
     const auto right_frame = model.getFrameId("R_wrist_ik_frame");
-    if (model.nq != DoF || left_frame == model.nframes || right_frame == model.nframes) return 2;
+    const auto left_grip = model.getFrameId("L_grip_frame");
+    const auto right_grip = model.getFrameId("R_grip_frame");
+    if (model.nq != DoF || left_frame == model.nframes || right_frame == model.nframes ||
+        left_grip == model.nframes || right_grip == model.nframes) return 2;
 
     if (argc > 1 && std::string(argv[1]) == "--measure-controller") {
         ros::init(argc, argv, "mission4_controller_measure");
@@ -51,9 +54,11 @@ int main(int argc, char** argv) {
     }
 
     VectorXd seed = VectorXd::Zero(DoF);
-    const bool pre_squeeze = argc > 1 && std::string(argv[1]) == "--pre-squeeze";
-    const bool publish_demo = (argc > 1 && std::string(argv[1]) == "--publish") || pre_squeeze;
-    if (publish_demo) {
+    const bool pre_squeeze = argc > 1 && (std::string(argv[1]) == "--pre-squeeze" ||
+                                          std::string(argv[1]) == "--pre-squeeze-check");
+    const bool publish_demo = argc > 1 && (std::string(argv[1]) == "--publish" ||
+                                           std::string(argv[1]) == "--pre-squeeze");
+    if (publish_demo || pre_squeeze) {
         ros::init(argc, argv, "mission4_ik_demo");
         ros::NodeHandle nh;
         const auto state = ros::topic::waitForMessage<sensor_msgs::JointState>(
@@ -85,19 +90,28 @@ int main(int argc, char** argv) {
     const Vector3d target_right = pre_squeeze ? Vector3d(0.45, -0.095, 1.225)
                                                 : start_right + Vector3d(0.015, 0.010, 0.010);
     VectorXd result;
-    dualarm.SolveIK_Position(model, data, left_frame, right_frame,
-                             target_left, target_right, seed, result);
+    if (pre_squeeze) {
+        dualarm.SolveIK_Arm4_Position(model,data,left_grip,right_grip,
+                                      target_left,target_right,seed,result);
+    } else {
+        dualarm.SolveIK_Position(model, data, left_frame, right_frame,
+                                 target_left, target_right, seed, result);
+    }
 
     pinocchio::forwardKinematics(model, data, result);
     pinocchio::updateFramePlacements(model, data);
-    const double left_error = (target_left - data.oMf[left_frame].translation()).norm();
-    const double right_error = (target_right - data.oMf[right_frame].translation()).norm();
+    const auto measured_left=pre_squeeze?data.oMf[left_grip]:data.oMf[left_frame];
+    const auto measured_right=pre_squeeze?data.oMf[right_grip]:data.oMf[right_frame];
+    const double left_error = (target_left - measured_left.translation()).norm();
+    const double right_error = (target_right - measured_right.translation()).norm();
     const double torso_error = (result.head<3>() - seed.head<3>()).cwiseAbs().maxCoeff();
     double wrist_max = 0.0;
     for (const int i : {7, 8, 13, 14}) wrist_max = std::max(wrist_max, std::abs(result(i)));
 
     std::cout << "left_error=" << left_error << " right_error=" << right_error
               << " torso_error=" << torso_error << " wrist_max=" << wrist_max << '\n';
+    if(pre_squeeze)std::cout<<"left_grip="<<measured_left.translation().transpose()
+                            <<" right_grip="<<measured_right.translation().transpose()<<'\n';
     std::cout << "result=" << result.transpose() << '\n';
 
     const bool pass = left_error < 0.003 && right_error < 0.003 &&
