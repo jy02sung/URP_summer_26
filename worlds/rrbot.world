@@ -74,61 +74,68 @@
     </model>
 
     <!-- ============================================================================
-         transport_fan_table: 허리(Waist_joint)가 크게 회전하는 모습을 보여주기 위한 시각화용
-         탁자. pick은 카메라 스캔 검증을 위해 원본 좌표(0.45,-0.15, -18.4deg)로 되돌렸고(위
-         pick_pedestal이 이미 그 지점을 담당하므로 이 model에는 pick 쪽 pad를 별도로 두지 않음),
-         place=(0.0823,0.4668, +80deg, 반지름 0.474m, waist 하드리밋 직전)만 새로 지지한다.
-         main.cpp의 SolveIK_Position(DLS+null-space, lambda=0.1)을 pinocchio로 그대로 재현해
-         스캔한 결과 Waist_joint가 실측 약 61.6deg 회전(place 쪽에서 관절 하드리밋 +0.87rad에
-         정확히 도달 - 이게 이 pick 위치에서의 스윙 물리적 상한, "90deg 이상"은 카메라 스캔이
-         고정 시야만 보는 한 이 로봇에서 불가능함을 여러 조합으로 확인, 사용자 확인 후 채택).
-         main.cpp/urdf 등 제어 로직은 전혀 건드리지 않음 - 순수 world 파일의 시각적 모델링.
+         transport_fan_table (4차 수정, 2026-07-18): 사용자가 실제 Gazebo GUI로 돌려보고 직접
+         지적함 - 이전 버전(안쪽 경계 반지름 0.354m)은 로봇 몸통에 너무 바짝 붙어 있어서, 팔이
+         (특히 팔꿈치가) 대기/복귀 자세로 움직일 때 상판 안쪽 모서리를 파고드는(clipping) 충돌이
+         실제로 발생함을 확인. 손끝 궤적만 보고 계산했던 이전 안전마진(IK 잔차 8.4cm 버퍼)이
+         팔꿈치처럼 몸통에 더 가까이 붙는 링크의 움직임까지는 못 잡아냈던 것.
 
-         안전 마진 산정: place 도달 지점에서 IK 수렴 잔차가 최대 ~8.4cm까지 발생함을 확인(반복
-         횟수를 늘려도 잔차 불변 - dual_arm_function.cpp 자체 주석의 "damped pseudo-inverse가
-         완전한 직교투영이 아니라 태스크 방향으로 샌다"는 현상과 일치, waist가 하드리밋에 눌린
-         채 목표에 못 미치는 구성이라 잔차가 큼). 상판 안쪽 경계를 반지름 0.354m로 제한(place
-         반경 0.474m 대비 12cm 여유) - 본체를 스윙 반경보다 상당히 안쪽으로 당겨두고, place
-         지점에만 지름 26cm 원형 받침(pad)을 반지름 0.474 지점까지 내밀어 물체를 지지한다(본체
-         바깥쪽 경계 0.354와 pad 안쪽 경계 0.344가 1cm 겹쳐 하나로 이어짐). 본체 각도범위는
-         -22~+83deg - pick_pedestal(반지름 0.474, -18.4deg) 쪽으로는 본체가 반지름 0.354까지만
-         뻗어 있어 겹치지 않는다(0.474 vs 0.354, 12cm 이격 - z-fighting 없음).
+         해결: 안쪽 경계를 0.354m -> 0.48m로 대폭 확대(약 28cm 더 바깥으로, 요청받은 25~30cm
+         이상 조건 충족) - 로봇 배 앞쪽에 넓은 빈 공간을 확보해 팔을 어떻게 움직여도(위아래로
+         크게 움직여도) 상판에 안 닿게 함. 바깥쪽 경계는 0.48->0.62m로 함께 밀어 상판 폭(0.14m)을
+         유지 - place 지점(0.0823,0.4668, 반지름 0.474m)은 place_pad(반지름 0.13m, 반경범위
+         0.344~0.604m)가 본체(0.48~0.62m)와 겹치며 지지. 본체 각도범위는 그대로 -22~+83deg
+         (로봇 정면 쪽은 본체가 아예 그 반경까지 안 뻗어 있어 자연히 뚫려 있음). pick 쪽은 여전히
+         원본 pick_pedestal(반지름 0.474m, -18.4deg)이 담당, 본체(반지름 0.48m 이상)와 26cm+
+         이격되어 안 겹침.
 
-         주의: 이 계산은 로봇의 유휴(idle) 자세를 정확히 몰라 근사값(q_pref 자세)으로 대체한
-         근사 모델이라 완전히 정밀하지 않다 - Stage 3 headless Gazebo 충돌 체크와 사용자의
-         GUI 실행 확인이 최종 검증. ============================================================ -->
+         재질: <script><name>Gazebo/Wood</name></script>로 원목 느낌 적용(상판+다리 전부).
+         다리 4개를 바깥쪽 테두리(반지름 0.58m, 로봇에서 먼 쪽)에만 배치해 바닥까지 내려가도록
+         해서, 팔 동작 범위와 절대 안 겹치게 함.
+
+         main.cpp/urdf 등 제어 로직은 이번에도 전혀 건드리지 않음 - 순수 world 파일 시각적
+         모델링. 실행 시 반드시 `source /home/jungmin/friend_ws_88pct/devel/setup.bash`를
+         먼저 하고 실행할 것(이 컴퓨터의 ~/.bashrc가 다른 워크스페이스(~/catkin_ws)를 자동
+         소싱해서, 안 그러면 rosrun이 이 워크스페이스가 아닌 다른 dual_arm 바이너리를 실행할 수
+         있음 - 3차 수정 검증 중 직접 확인한 문제). ============================================================ -->
     <model name="transport_fan_table">
       <static>true</static>
       <pose>0 0 0 0 0 0</pose>
       <link name="link">
-        <collision name="fan_seg_0_collision"><pose>0.2635 -0.0854 1.1600 0 0 -0.3135</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_0_visual"><pose>0.2635 -0.0854 1.1600 0 0 -0.3135</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_1_collision"><pose>0.2729 -0.0476 1.1600 0 0 -0.1725</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_1_visual"><pose>0.2729 -0.0476 1.1600 0 0 -0.1725</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_2_collision"><pose>0.2769 -0.0087 1.1600 0 0 -0.0316</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_2_visual"><pose>0.2769 -0.0087 1.1600 0 0 -0.0316</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_3_collision"><pose>0.2753 0.0302 1.1600 0 0 0.1094</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_3_visual"><pose>0.2753 0.0302 1.1600 0 0 0.1094</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_4_collision"><pose>0.2684 0.0686 1.1600 0 0 0.2504</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_4_visual"><pose>0.2684 0.0686 1.1600 0 0 0.2504</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_5_collision"><pose>0.2561 0.1057 1.1600 0 0 0.3914</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_5_visual"><pose>0.2561 0.1057 1.1600 0 0 0.3914</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_6_collision"><pose>0.2387 0.1406 1.1600 0 0 0.5323</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_6_visual"><pose>0.2387 0.1406 1.1600 0 0 0.5323</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_7_collision"><pose>0.2166 0.1727 1.1600 0 0 0.6733</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_7_visual"><pose>0.2166 0.1727 1.1600 0 0 0.6733</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_8_collision"><pose>0.1901 0.2014 1.1600 0 0 0.8143</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_8_visual"><pose>0.1901 0.2014 1.1600 0 0 0.8143</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_9_collision"><pose>0.1599 0.2262 1.1600 0 0 0.9552</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_9_visual"><pose>0.1599 0.2262 1.1600 0 0 0.9552</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_10_collision"><pose>0.1266 0.2464 1.1600 0 0 1.0962</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_10_visual"><pose>0.1266 0.2464 1.1600 0 0 1.0962</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_11_collision"><pose>0.0907 0.2617 1.1600 0 0 1.2372</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_11_visual"><pose>0.0907 0.2617 1.1600 0 0 1.2372</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
-        <collision name="fan_seg_12_collision"><pose>0.0530 0.2719 1.1600 0 0 1.3781</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry></collision>
-        <visual name="fan_seg_12_visual"><pose>0.0530 0.2719 1.1600 0 0 1.3781</pose><geometry><box><size>0.0449 0.1540 0.08</size></box></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <collision name="top_seg_0_collision"><pose>0.5242 -0.1665 1.1600 0 0 -0.3076</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_0_visual"><pose>0.5242 -0.1665 1.1600 0 0 -0.3076</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_1_collision"><pose>0.5434 -0.0849 1.1600 0 0 -0.1549</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_1_visual"><pose>0.5434 -0.0849 1.1600 0 0 -0.1549</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_2_collision"><pose>0.5500 -0.0012 1.1600 0 0 -0.0022</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_2_visual"><pose>0.5500 -0.0012 1.1600 0 0 -0.0022</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_3_collision"><pose>0.5438 0.0825 1.1600 0 0 0.1505</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_3_visual"><pose>0.5438 0.0825 1.1600 0 0 0.1505</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_4_collision"><pose>0.5249 0.1642 1.1600 0 0 0.3033</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_4_visual"><pose>0.5249 0.1642 1.1600 0 0 0.3033</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_5_collision"><pose>0.4938 0.2422 1.1600 0 0 0.4560</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_5_visual"><pose>0.4938 0.2422 1.1600 0 0 0.4560</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_6_collision"><pose>0.4512 0.3145 1.1600 0 0 0.6087</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_6_visual"><pose>0.4512 0.3145 1.1600 0 0 0.6087</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_7_collision"><pose>0.3981 0.3795 1.1600 0 0 0.7614</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_7_visual"><pose>0.3981 0.3795 1.1600 0 0 0.7614</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_8_collision"><pose>0.3358 0.4356 1.1600 0 0 0.9141</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_8_visual"><pose>0.3358 0.4356 1.1600 0 0 0.9141</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_9_collision"><pose>0.2656 0.4816 1.1600 0 0 1.0668</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_9_visual"><pose>0.2656 0.4816 1.1600 0 0 1.0668</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_10_collision"><pose>0.1892 0.5164 1.1600 0 0 1.2195</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_10_visual"><pose>0.1892 0.5164 1.1600 0 0 1.2195</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="top_seg_11_collision"><pose>0.1085 0.5392 1.1600 0 0 1.3723</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry></collision>
+        <visual name="top_seg_11_visual"><pose>0.1085 0.5392 1.1600 0 0 1.3723</pose><geometry><box><size>0.0965 0.1400 0.08</size></box></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
         <collision name="place_pad_collision"><pose>0.0823 0.4668 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry></collision>
-        <visual name="place_pad_visual"><pose>0.0823 0.4668 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry><material><ambient>0.55 0.35 0.2 1</ambient><diffuse>0.55 0.35 0.2 1</diffuse></material></visual>
+        <visual name="place_pad_visual"><pose>0.0823 0.4668 1.1600 0 0 0</pose><geometry><cylinder><radius>0.13</radius><length>0.08</length></cylinder></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_0_collision"><pose>0.5722 -0.0947 0.5600 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>1.1200</length></cylinder></geometry></collision>
+        <visual name="leg_0_visual"><pose>0.5722 -0.0947 0.5600 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>1.1200</length></cylinder></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_1_collision"><pose>0.5519 0.1783 0.5600 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>1.1200</length></cylinder></geometry></collision>
+        <visual name="leg_1_visual"><pose>0.5519 0.1783 0.5600 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>1.1200</length></cylinder></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_2_collision"><pose>0.4235 0.3963 0.5600 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>1.1200</length></cylinder></geometry></collision>
+        <visual name="leg_2_visual"><pose>0.4235 0.3963 0.5600 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>1.1200</length></cylinder></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
+        <collision name="leg_3_collision"><pose>0.1946 0.5464 0.5600 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>1.1200</length></cylinder></geometry></collision>
+        <visual name="leg_3_visual"><pose>0.1946 0.5464 0.5600 0 0 0</pose><geometry><cylinder><radius>0.03</radius><length>1.1200</length></cylinder></geometry><material><script><uri>file://media/materials/scripts/gazebo.material</uri><name>Gazebo/Wood</name></script></material></visual>
       </link>
     </model>
 
