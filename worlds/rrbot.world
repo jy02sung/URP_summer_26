@@ -3,6 +3,12 @@
   <!-- We use a custom world for the rrbot so that the camera angle is launched correctly -->
 
   <world name="default">
+    <!-- 제어 주기와 물리 시간을 1:1로 유지한다. 무제한 RTF에서는 외부 PD 명령이
+         시뮬레이션 시간 기준으로 성기게 도착해 속도 피드백이 지연된다. -->
+    <physics type="ode">
+      <max_step_size>0.001</max_step_size>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
     <include>
       <uri>model://ground_plane</uri>
     </include>

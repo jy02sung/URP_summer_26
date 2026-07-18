@@ -189,7 +189,8 @@ void DualArmControl::PDController(double* target_q, double* current_q, double* t
 ////////////////////////////////////////////////////////////////////////////////////////////
 //----------------------------------- Inverse Kinematics ---------------------------------//
 ////////////////////////////////////////////////////////////////////////////////////////////
-// DLS(Damped Least Squares) 위치 IK. 좌우를 6D 스택 태스크로 동시에 푼다.
+// DLS(Damped Least Squares) 위치 IK. 좌우를 6D 스택 태스크로 동시에 풀되,
+// 좌측 frame에는 좌팔 6개 열만, 우측 frame에는 우팔 6개 열만 허용한다.
 //   e = [tL - xL ; tR - xR]   (6x1, 위치 오차)
 //   J = [JL(상위3행) ; JR(상위3행)]  (6 x DoF)
 //   dq = Jᵀ (J Jᵀ + λ²I)⁻¹ e
@@ -220,7 +221,7 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
     // 항상 0.16~0.34rad로 넉넉히 유지됐다 - 이 구조는 애초 여유가 커서 null-space가
     // 세게 안 밀어도 붕괴하지 않는다. 잔차를 줄이면서도 선호가 유의미하게 반영되는
     // 절충값으로 0.1을 선택(잔차 6.5mm, 여전히 elbow는 -0.95~-1.19로 아래쪽 유지).
-    const double posture_gain = 0.1;
+    const double posture_gain = 0.001;
 
     VectorXd q = q_seed;
 
@@ -254,9 +255,9 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
         pinocchio::getFrameJacobian(model, data, l_EE, pinocchio::LOCAL_WORLD_ALIGNED, JL);
         pinocchio::getFrameJacobian(model, data, r_EE, pinocchio::LOCAL_WORLD_ALIGNED, JR);
 
-        MatrixXd J(6, model.nv);
-        J.topRows<3>()    = JL.topRows<3>();   // 위치 3행만
-        J.bottomRows<3>() = JR.topRows<3>();
+        MatrixXd J = MatrixXd::Zero(6, model.nv);
+        J.block(0, 3, 3, 6) = JL.block(0, 3, 3, 6);  // left arm only
+        J.block(3, 9, 3, 6) = JR.block(0, 9, 3, 6);  // right arm only
 
         MatrixXd JJt = J * J.transpose() + (lambda*lambda) * MatrixXd::Identity(6,6);
         MatrixXd JJt_inv = JJt.ldlt().solve(MatrixXd::Identity(6,6));
@@ -271,18 +272,27 @@ void DualArmControl::SolveIK_Position(pinocchio::Model& model, pinocchio::Data& 
         // N의 비대각 결합도 전부 0).
         MatrixXd N = MatrixXd::Identity(model.nv, model.nv) - Jpinv * J;
         VectorXd postureErr = posture_gain * (q_pref - q);
-        postureErr(1) = 0.0;  // Head_yaw
-        postureErr(2) = 0.0;  // Head_pitch
+        postureErr.head<3>().setZero();
         dq += N * postureErr;
 
+        // 수치 오차까지 포함해 waist/head 변화량을 완전히 차단한다.
+        dq.head<3>().setZero();
+
         q += step * dq;
+        q.head<3>() = q_seed.head<3>();
 
         // 관절 한계 클램핑
         for (int i = 0; i < model.nq; ++i)
             q(i) = std::min(std::max(q(i), model.lowerPositionLimit(i)),
                                            model.upperPositionLimit(i));
+
+        // 위치-only IK가 자세 여유로 X-Z 손목을 물리 한계까지 보내지 못하게 한다.
+        constexpr double wrist_ik_limit = 0.35;
+        for (const int i : {7, 8, 13, 14})
+            q(i) = std::min(std::max(q(i), -wrist_ik_limit), wrist_ik_limit);
     }
 
+    q.head<3>() = q_seed.head<3>();
     q_out = q;
 }
 

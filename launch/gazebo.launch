@@ -27,21 +27,22 @@
   <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model" respawn="false" output="screen"
     args="-urdf -model dual_arm -param robot_description
       -J Waist_joint 0
-      -J L_shoulder_pitch_joint 0
-      -J L_shoulder_roll_joint 0
+      -J L_shoulder_pitch_joint -0.2
+      -J L_shoulder_roll_joint 0.35
       -J L_shoulder_yaw_joint 0
-      -J L_elbow_joint 0
+      -J L_elbow_joint -0.9
       -J L_wrist_yaw_joint 0
       -J L_wrist_pitch_joint 0
-      -J R_shoulder_pitch_joint 0
-      -J R_shoulder_roll_joint 0
+      -J R_shoulder_pitch_joint -0.2
+      -J R_shoulder_roll_joint -0.35
       -J R_shoulder_yaw_joint 0
-      -J R_elbow_joint 0
+      -J R_elbow_joint -0.9
       -J R_wrist_yaw_joint 0
       -J R_wrist_pitch_joint 0
       -J Head_yaw_joint 0
       -J Head_pitch_joint 0"/>
   
   <!-- Mission 3 intentionally excludes IK/grasp dynamics while tuning 15DoF PD hold. -->
+  <node pkg="dual_arm" type="gravity_pd_controller" name="gravity_pd_controller" output="screen"/>
 
 </launch>
