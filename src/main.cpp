@@ -47,23 +47,34 @@ void msgCallbackArucoPose(const geometry_msgs::PoseStamped::ConstPtr& msg)
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Head 마커 탐색 (PHASE_SCAN)
-// command_mode==3(vision pick) 진입 시 Head를 고정 자세(HEAD_SCAN_YAW/PITCH)로 이동시키고 ArUco 검출을 기다린다.
+// command_mode==3(vision pick) 진입 시 Head를 스캔 자세로 이동시키고 ArUco 검출을 기다린다.
 // P0 진단 결과: Head_pitch는 +방향이 아래(물체 쪽)를 향한다 (좌표계 직관과 반대).
 // 정지 후 0.5s 대기 -> 그 이후 도착하는 /aruco_ros/pose를 연속 3프레임 비교해서 서로 1cm 이내로
 // 일치하면 검출 확정. 확인 시간이 타임아웃을 넘으면 ROS_WARN을 띄우고 실패 처리한다.
+//
+// 2026-07-18 (테이블/물체 z 변경 대응): 물체 높이가 바뀔 때마다 고정 pitch 한 값을 다시 맞춰야
+// 했던 문제를 없애기 위해, 단일 고정 pitch 대신 위(pitch 작음, 덜 내려다봄)에서 아래(pitch 큼,
+// 더 내려다봄)로 HEAD_SCAN_PITCH_STEPS 단계를 순서대로 훑는 방식으로 변경. 각 단계에서 기존과
+// 동일한 SETTLE+CHECK(0.5s 정지 후 최대 4s, 3프레임 일치) 절차를 그대로 적용하고, 그 안에서
+// 못 찾으면 다음 pitch로 넘어간다 - 어느 단계에서든 찾으면 그 즉시 확정하고 파지 파이프라인을
+// 실행한다(끝까지 훑고도 못 찾을 때만 실패 처리).
 enum ScanStep { SCAN_MOVE, SCAN_SETTLE, SCAN_CHECK };
 
 bool scan_active = false;
 int scan_step = SCAN_MOVE;
 int scan_wait_cnt = 0;
+int scan_pitch_idx = 0;                // 현재 스윕 단계 인덱스 (0=맨 위 ~ HEAD_SCAN_PITCH_STEPS-1=맨 아래)
 unsigned long scan_last_seq = 0;
 std::vector<Vector3d> scan_match_buf;  // 연속 프레임 일치 판정용 버퍼 (카메라 프레임 좌표)
 double scan_q[DoF] = {0,};             // 스캔 진행 중 "현재 명령 관절각" (head만 갱신, 나머지는 스캔 시작 시점 값 유지)
 
 const double HEAD_SCAN_YAW            = 0.0;
-const double HEAD_SCAN_PITCH          = 0.5236;  // P0 진단 결과: pitch +방향이 물체를 내려다보는 방향
+const double HEAD_SCAN_PITCH_TOP      = 0.15;    // 스윕 시작 pitch(위쪽, 덜 내려다봄) [rad]
+const double HEAD_SCAN_PITCH_BOTTOM   = 0.75;    // 스윕 종료 pitch(아래쪽, 더 내려다봄) [rad]
+                                                  // 기존 단일 고정값(0.5236rad=30deg)이 이 범위 중앙 부근에 오도록 설정
+const int    HEAD_SCAN_PITCH_STEPS    = 5;       // 스윕 단계 수(양끝 포함) - 0.15,0.30,0.45,0.60,0.75rad
 const int    SCAN_SETTLE_TICKS        = 500;     // 0.5s @ 1000Hz - 정지 후 카메라/인식 안정화 대기
-const int    SCAN_CHECK_TIMEOUT_TICKS = 4000;    // 4s - 이 안에 3프레임 일치를 못 찾으면 실패 처리
+const int    SCAN_CHECK_TIMEOUT_TICKS = 4000;    // 4s - 이 안에 3프레임 일치를 못 찾으면 다음 단계로
                                                   // (실측: aruco_ros 인식 속도가 ~1.5~2Hz에 간헐적으로 최대 ~1s 갭이 있음)
 const int    SCAN_MATCH_FRAMES        = 3;       // 연속 일치 판정에 필요한 프레임 수
 const double SCAN_MATCH_TOL           = 0.01;    // [m] 연속 프레임 간 허용 오차
@@ -341,6 +352,13 @@ int main(int argc, char **argv)
         scan_step = SCAN_MOVE;
     };
 
+    // ===== 스윕 단계 인덱스(0~HEAD_SCAN_PITCH_STEPS-1) -> pitch 값 [rad] 선형 보간 =====
+    auto headScanPitchAt = [&](int idx) {
+        if (HEAD_SCAN_PITCH_STEPS <= 1) return HEAD_SCAN_PITCH_TOP;
+        double t = (double)idx / (double)(HEAD_SCAN_PITCH_STEPS - 1);
+        return HEAD_SCAN_PITCH_TOP + t * (HEAD_SCAN_PITCH_BOTTOM - HEAD_SCAN_PITCH_TOP);
+    };
+
     // ===== Head 스캔으로 확정된 검출 결과로 기존 양팔 파지 파이프라인(접근~복귀 6세그먼트)을 생성 =====
     // base_q: 파이프라인 시작 시점의 "현재 관절각"(waist/양팔은 스캔 시작 시점 값, head는 스캔이 멈춘 실제 웨이포인트).
     // 반환값 false면 TF 변환 실패 -> 궤적 생성 안 됨(호출부에서 실패 처리).
@@ -583,8 +601,8 @@ int main(int argc, char **argv)
             }
 
             if ((int)scan_match_buf.size() >= SCAN_MATCH_FRAMES) {
-                ROS_INFO("Head scan: marker confirmed (yaw=%.1fdeg, pitch=%.1fdeg)",
-                         HEAD_SCAN_YAW * rad2deg, HEAD_SCAN_PITCH * rad2deg);
+                ROS_INFO("Head scan: marker confirmed at sweep step %d/%d (yaw=%.1fdeg, pitch=%.1fdeg)",
+                         scan_pitch_idx + 1, HEAD_SCAN_PITCH_STEPS, HEAD_SCAN_YAW * rad2deg, scan_q[2] * rad2deg);
                 scan_active = false;
                 if (!buildGraspPipelineFromDetection(scan_q)) {
                     task_phase = PHASE_APPROACH;   // TF 실패 -> 실패 처리, 접근 단계로 리셋
@@ -594,8 +612,16 @@ int main(int argc, char **argv)
 
             scan_wait_cnt++;
             if (scan_wait_cnt >= SCAN_CHECK_TIMEOUT_TICKS) {
-                ROS_WARN("Head scan: object not found at scan pose (yaw=%.1fdeg, pitch=%.1fdeg).",
-                         HEAD_SCAN_YAW * rad2deg, HEAD_SCAN_PITCH * rad2deg);
+                if (scan_pitch_idx + 1 < HEAD_SCAN_PITCH_STEPS) {
+                    // 이 단계에서 못 찾음 -> 다음(더 아래쪽) pitch로 넘어가서 다시 SETTLE+CHECK
+                    scan_pitch_idx++;
+                    ROS_INFO("Head scan: not found at step %d/%d (pitch=%.1fdeg), moving to next pitch.",
+                             scan_pitch_idx, HEAD_SCAN_PITCH_STEPS, scan_q[2] * rad2deg);
+                    startScanMoveTo(HEAD_SCAN_YAW, headScanPitchAt(scan_pitch_idx));
+                    return;
+                }
+                ROS_WARN("Head scan: object not found after sweeping all %d pitch steps (%.1fdeg~%.1fdeg).",
+                         HEAD_SCAN_PITCH_STEPS, HEAD_SCAN_PITCH_TOP * rad2deg, HEAD_SCAN_PITCH_BOTTOM * rad2deg);
                 scan_active = false;
                 task_phase = PHASE_APPROACH;   // 실패 처리: 접근 단계로 리셋, 마지막 자세에서 정지 유지
             }
@@ -801,10 +827,11 @@ int main(int argc, char **argv)
                 // 끝나기 한참 전인 지금 미리 만들어둬야, 이후 이송 중에도 목표 지점을 눈으로 계속 볼 수 있다.
                 spawnPlaceIndicator(Vector3d(tx, ty, tz));
 
-                ROS_INFO("Vision pick: moving head to scan pose (yaw=%.1fdeg, pitch=%.1fdeg) and checking for marker.",
-                         HEAD_SCAN_YAW * rad2deg, HEAD_SCAN_PITCH * rad2deg);
+                scan_pitch_idx = 0;
+                ROS_INFO("Vision pick: sweeping head pitch %.1fdeg~%.1fdeg (%d steps, top to bottom) to find marker.",
+                         HEAD_SCAN_PITCH_TOP * rad2deg, HEAD_SCAN_PITCH_BOTTOM * rad2deg, HEAD_SCAN_PITCH_STEPS);
 
-                startScanMoveTo(HEAD_SCAN_YAW, HEAD_SCAN_PITCH);
+                startScanMoveTo(HEAD_SCAN_YAW, headScanPitchAt(scan_pitch_idx));
                 scan_active = true;
             }
 
