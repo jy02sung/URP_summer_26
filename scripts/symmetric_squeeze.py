@@ -6,7 +6,7 @@ import rospy
 from gazebo_msgs.msg import ModelStates
 from geometry_msgs.msg import WrenchStamped
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64, Float64MultiArray
 
 
 class SymmetricSqueeze:
@@ -17,6 +17,12 @@ class SymmetricSqueeze:
         self.box = None
         self.pub = rospy.Publisher('/dual_arm/squeeze_force_targets', Float64MultiArray,
                                    queue_size=1, latch=True)
+        self.left_force_pub = rospy.Publisher('/dual_arm/grip_force/left', Float64, queue_size=1)
+        self.right_force_pub = rospy.Publisher('/dual_arm/grip_force/right', Float64, queue_size=1)
+        self.target_force_pub = rospy.Publisher('/dual_arm/grip_force/target', Float64, queue_size=1)
+        self.bias_left = None
+        self.bias_right = None
+        self.graph_target = 0.0
         rospy.Subscriber('/dual_arm/left_ft_sensor', WrenchStamped, self.left_cb, queue_size=1)
         rospy.Subscriber('/dual_arm/right_ft_sensor', WrenchStamped, self.right_cb, queue_size=1)
         rospy.Subscriber('/dual_arm/joint_states', JointState, self.joint_cb, queue_size=1)
@@ -38,6 +44,10 @@ class SymmetricSqueeze:
 
     def send(self, left, right, common_x=0.0, common_z=0.0):
         self.pub.publish(Float64MultiArray(data=[left, right, common_x, common_z]))
+        if self.bias_left is not None and self.bias_right is not None:
+            self.left_force_pub.publish(Float64(max(0.0, self.left_y-self.bias_left)))
+            self.right_force_pub.publish(Float64(max(0.0, -(self.right_y-self.bias_right))))
+            self.target_force_pub.publish(Float64(self.graph_target))
 
     def run(self):
         deadline = time.monotonic() + 5.0
@@ -55,6 +65,7 @@ class SymmetricSqueeze:
             rospy.sleep(0.01)
         bias_left = sum(left_samples) / len(left_samples)
         bias_right = sum(right_samples) / len(right_samples)
+        self.bias_left, self.bias_right = bias_left, bias_right
         start_y = self.box.position.y
         desired_x, desired_z = 0.45, 1.225
 
@@ -72,6 +83,7 @@ class SymmetricSqueeze:
         contact_start = time.monotonic()
         left_contact = right_contact = False
         while not rospy.is_shutdown() and time.monotonic()-contact_start < 25.0:
+            self.graph_target = 0.5
             raw_left=max(0.0,self.left_y-bias_left);raw_right=max(0.0,-(self.right_y-bias_right))
             filtered_left+=0.05*(raw_left-filtered_left);filtered_right+=0.05*(raw_right-filtered_right)
             left_contact=left_contact or filtered_left>=0.5
@@ -97,6 +109,7 @@ class SymmetricSqueeze:
         while not rospy.is_shutdown() and time.monotonic() - start < 45.0:
             elapsed = time.monotonic() - start
             desired = min(10.0, 0.5+0.25*elapsed)  # both contacts established at 0.5 N
+            self.graph_target = desired
             raw_left = max(0.0, self.left_y - bias_left)
             raw_right = max(0.0, -(self.right_y - bias_right))
             filtered_left += 0.05*(raw_left-filtered_left)
@@ -137,6 +150,7 @@ class SymmetricSqueeze:
             # Keep the final P-only force loop active for a five-second hold check.
             hold_start = time.monotonic()
             while not rospy.is_shutdown() and time.monotonic() - hold_start < 5.0:
+                self.graph_target = 10.0
                 measured_left = max(0.0, self.left_y - bias_left)
                 measured_right = max(0.0, -(self.right_y - bias_right))
                 imbalance = measured_left - measured_right
