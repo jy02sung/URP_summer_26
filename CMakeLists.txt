@@ -43,3 +43,6 @@ target_link_libraries(mission4_ik_check ${catkin_LIBRARIES} pinocchio::pinocchio
 add_executable(gravity_pd_controller src/gravity_pd_controller.cpp)
 add_dependencies(gravity_pd_controller ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(gravity_pd_controller ${catkin_LIBRARIES} pinocchio::pinocchio)
+
+catkin_install_python(PROGRAMS scripts/symmetric_squeeze.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

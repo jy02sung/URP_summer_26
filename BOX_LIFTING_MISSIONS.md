@@ -404,6 +404,20 @@ Settled peak velocity: below 7e-6rad/s
 Result: 손목 자유도를 소비하지 않고 양손 pre-squeeze 위치에 안정적으로 정지
 ```
 
+### 대칭 squeeze 중간 성공 기록
+
+```text
+Date: 2026-07-19
+Control: 좌우 독립 P force loop + J^T F feedforward, I/RNEA 없음
+Contact: 0.5N 순차 접촉 게이트 후 0.25N/s 동시 ramp
+Wrist during squeeze: P=0.2, D=1.2로 외력 순응; yaw/pitch 자세 구속 없음
+Measured hold force: Left 9.41N, Right 9.99N
+Box height: 1.225m 유지
+Observed result: 양손바닥이 접촉면에 자연스럽게 정렬되고 파지 자세 안정
+Remaining error: box center X +7.9mm, Y +6.8mm
+Status: 파지 형상/힘은 성공, 중심 보정 게인 미세 조정 필요
+```
+
 ---
 
 ## Mission 6 — 힘 및 손목 진단 토픽

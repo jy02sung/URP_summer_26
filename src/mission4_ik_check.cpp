@@ -54,10 +54,13 @@ int main(int argc, char** argv) {
     }
 
     VectorXd seed = VectorXd::Zero(DoF);
-    const bool pre_squeeze = argc > 1 && (std::string(argv[1]) == "--pre-squeeze" ||
-                                          std::string(argv[1]) == "--pre-squeeze-check");
+    const bool squeeze = argc > 1 && (std::string(argv[1]) == "--squeeze" ||
+                                      std::string(argv[1]) == "--squeeze-check");
+    const bool pre_squeeze = squeeze || (argc > 1 && (std::string(argv[1]) == "--pre-squeeze" ||
+                                          std::string(argv[1]) == "--pre-squeeze-check"));
     const bool publish_demo = argc > 1 && (std::string(argv[1]) == "--publish" ||
-                                           std::string(argv[1]) == "--pre-squeeze");
+                                           std::string(argv[1]) == "--pre-squeeze" ||
+                                           std::string(argv[1]) == "--squeeze");
     if (publish_demo || pre_squeeze) {
         ros::init(argc, argv, "mission4_ik_demo");
         ros::NodeHandle nh;
@@ -85,9 +88,10 @@ int main(int argc, char** argv) {
 
     // Mission 5 first gate: stop 20mm outside the 150mm box surfaces without contact.
     // Otherwise retain the small bilateral Mission 4 regression displacement.
-    const Vector3d target_left = pre_squeeze ? Vector3d(0.45, 0.095, 1.225)
+    const double squeeze_y=squeeze?0.065:0.095;
+    const Vector3d target_left = pre_squeeze ? Vector3d(0.45, squeeze_y, 1.225)
                                                : start_left + Vector3d(0.015, -0.010, 0.010);
-    const Vector3d target_right = pre_squeeze ? Vector3d(0.45, -0.095, 1.225)
+    const Vector3d target_right = pre_squeeze ? Vector3d(0.45, -squeeze_y, 1.225)
                                                 : start_right + Vector3d(0.015, 0.010, 0.010);
     VectorXd result;
     if (pre_squeeze) {
