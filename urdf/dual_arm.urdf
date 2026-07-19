@@ -229,7 +229,7 @@
     <origin rpy="0 0 0" xyz="0 0 -0.12"/>
     <parent link="L_wrist_yaw"/>
     <child link="L_wrist_pitch"/>
-    <axis xyz="0 1 0"/>
+    <axis xyz="1 0 0"/>
     <dynamics damping="1.5"/>
     <limit effort="12" lower="-0.6" upper="0.6" velocity="3"/>
   </joint>
@@ -454,7 +454,7 @@
     <origin rpy="0 0 0" xyz="0 0 -0.12"/>
     <parent link="R_wrist_yaw"/>
     <child link="R_wrist_pitch"/>
-    <axis xyz="0 1 0"/>
+    <axis xyz="1 0 0"/>
     <dynamics damping="1.5"/>
     <limit effort="12" lower="-0.6" upper="0.6" velocity="3"/>
   </joint>
