@@ -47,4 +47,5 @@ target_link_libraries(gravity_pd_controller ${catkin_LIBRARIES} pinocchio::pinoc
 catkin_install_python(PROGRAMS
   scripts/symmetric_squeeze.py
   scripts/ee_position_publisher.py
+  scripts/force_graph_preview.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
