@@ -17,6 +17,7 @@ class SymmetricSqueeze:
         self.current_velocity = 0.0
         self.velocity_violation_since = None
         self.box = None
+        self.box_vz = 0.0
         self.pub = rospy.Publisher('/dual_arm/squeeze_force_targets', Float64MultiArray,
                                    queue_size=1, latch=True)
         self.left_force_pub = rospy.Publisher('/dual_arm/grip_force/left', Float64, queue_size=1)
@@ -53,7 +54,9 @@ class SymmetricSqueeze:
 
     def model_cb(self, msg):
         if 'aruco_box_26' in msg.name:
-            self.box = msg.pose[msg.name.index('aruco_box_26')]
+            index = msg.name.index('aruco_box_26')
+            self.box = msg.pose[index]
+            self.box_vz = msg.twist[index].linear.z
 
     def send(self, left, right, common_x=0.0, common_z=0.0):
         self.pub.publish(Float64MultiArray(data=[left, right, common_x, common_z]))
@@ -182,9 +185,50 @@ class SymmetricSqueeze:
                 common_z = min(2.0, max(-2.0, -200.0*(self.box.position.z-desired_z)))
                 self.send(cmd_left, cmd_right, common_x, common_z)
                 rate.sleep()
-            if (abs(self.box.position.x-desired_x)>0.003 or abs(self.box.position.y)>0.003 or
-                    abs(self.box.position.z-desired_z)>0.005):
-                trip='final box displacement'
+            # Lift 5cm in 3s, hold for 2s, lower in 3s, then unload onto the pedestal.
+            lift_start = time.monotonic()
+            while not rospy.is_shutdown() and time.monotonic()-lift_start < 10.0:
+                elapsed = time.monotonic()-lift_start
+                if elapsed < 3.0:
+                    u = elapsed/3.0
+                    smooth = u*u*(3.0-2.0*u)
+                    target_z = desired_z+0.05*smooth
+                elif elapsed < 5.0:
+                    target_z = desired_z+0.05
+                elif elapsed < 8.0:
+                    u = (elapsed-5.0)/3.0
+                    smooth = u*u*(3.0-2.0*u)
+                    target_z = desired_z+0.05*(1.0-smooth)
+                else:
+                    target_z = desired_z
+                measured_left, measured_right = self.update_filtered_force()
+                imbalance = measured_left-measured_right
+                error_left = 0.0 if abs(10.0-measured_left)<0.2 else 10.0-measured_left
+                error_right = 0.0 if abs(10.0-measured_right)<0.2 else 10.0-measured_right
+                requested_left = 10.0+kp_force*error_left-k_balance*imbalance
+                requested_right = 10.0+kp_force*error_right+k_balance*imbalance
+                cmd_left += min(0.01,max(-0.01,requested_left-cmd_left))
+                cmd_right += min(0.01,max(-0.01,requested_right-cmd_right))
+                cmd_left=min(12.0,max(0.0,cmd_left));cmd_right=min(12.0,max(0.0,cmd_right))
+                if elapsed < 8.0:
+                    requested_z=min(8.0,max(0.0,4.905+80.0*(target_z-self.box.position.z)-10.0*self.box_vz))
+                else:
+                    requested_z=0.0
+                common_z += min(0.02,max(-0.02,requested_z-common_z))
+                common_x=min(5.0,max(-5.0,-500.0*(self.box.position.x-desired_x)))
+                dx=self.box.position.x-desired_x;dy=self.box.position.y-start_y
+                if abs(dx)>0.020 or abs(dy)>0.020:
+                    trip='lift lateral displacement'
+                elif measured_left>12.0 or measured_right>12.0:
+                    trip='lift force limit'
+                elif self.velocity_unsafe():
+                    trip='lift velocity limit'
+                if trip:break
+                self.graph_target=10.0
+                self.send(cmd_left,cmd_right,common_x,common_z)
+                rate.sleep()
+            if not trip and abs(self.box.position.z-desired_z)>0.015:
+                trip='lowering height error'
         measured_left = max(0.0, self.left_y - bias_left)
         measured_right = max(0.0, -(self.right_y - bias_right))
         rospy.loginfo('symmetric squeeze: trip=%s L=%.3f R=%.3f cmdL=%.3f cmdR=%.3f max_v=%.3f',

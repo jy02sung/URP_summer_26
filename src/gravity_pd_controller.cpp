@@ -52,7 +52,7 @@ class GravityPd {
     squeeze_force_left_=std::max(0.0,std::min(m->data[0],12.0));
     squeeze_force_right_=std::max(0.0,std::min(m->data[1],12.0));
     common_force_x_=m->data.size()==4?std::max(-5.0,std::min(m->data[2],5.0)):0.0;
-    common_force_z_=m->data.size()==4?std::max(-2.0,std::min(m->data[3],2.0)):0.0;
+    common_force_z_=m->data.size()==4?std::max(-8.0,std::min(m->data[3],8.0)):0.0;
   }
   void publish(){
     const Eigen::VectorXd g=pinocchio::computeGeneralizedGravity(model_,*data_,q_);std::array<double,N> tau{};
