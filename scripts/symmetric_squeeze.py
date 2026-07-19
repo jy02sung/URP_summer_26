@@ -15,6 +15,7 @@ class SymmetricSqueeze:
         self.right_y = None
         self.max_velocity = 0.0
         self.current_velocity = 0.0
+        self.max_velocity_joint = ''
         self.velocity_violation_since = None
         self.box = None
         self.box_vz = 0.0
@@ -41,8 +42,11 @@ class SymmetricSqueeze:
 
     def joint_cb(self, msg):
         if msg.velocity:
-            self.current_velocity = max(abs(v) for v in msg.velocity)
-            self.max_velocity = max(self.max_velocity, self.current_velocity)
+            index = max(range(len(msg.velocity)), key=lambda i: abs(msg.velocity[i]))
+            self.current_velocity = abs(msg.velocity[index])
+            if self.current_velocity > self.max_velocity:
+                self.max_velocity = self.current_velocity
+                self.max_velocity_joint = msg.name[index] if index < len(msg.name) else 'unknown'
 
     def velocity_unsafe(self):
         if self.current_velocity <= 0.5:
@@ -123,8 +127,9 @@ class SymmetricSqueeze:
         if not trip and not (left_contact and right_contact):trip='contact timeout'
         if trip:
             self.send(0.0,0.0)
-            rospy.loginfo('symmetric squeeze: trip=%s L=%.3f R=%.3f cmdL=%.3f cmdR=%.3f max_v=%.3f',
-                          trip,filtered_left,filtered_right,cmd_left,cmd_right,self.max_velocity)
+            rospy.loginfo('symmetric squeeze: trip=%s L=%.3f R=%.3f cmdL=%.3f cmdR=%.3f max_v=%.3f (%s)',
+                          trip,filtered_left,filtered_right,cmd_left,cmd_right,self.max_velocity,
+                          self.max_velocity_joint)
             return 1
 
         start = time.monotonic()
@@ -231,8 +236,9 @@ class SymmetricSqueeze:
                 trip='lowering height error'
         measured_left = max(0.0, self.left_y - bias_left)
         measured_right = max(0.0, -(self.right_y - bias_right))
-        rospy.loginfo('symmetric squeeze: trip=%s L=%.3f R=%.3f cmdL=%.3f cmdR=%.3f max_v=%.3f',
-                      trip or 'none', measured_left, measured_right, cmd_left, cmd_right, self.max_velocity)
+        rospy.loginfo('symmetric squeeze: trip=%s L=%.3f R=%.3f cmdL=%.3f cmdR=%.3f max_v=%.3f (%s)',
+                      trip or 'none', measured_left, measured_right, cmd_left, cmd_right,
+                      self.max_velocity, self.max_velocity_joint)
         # Keep graph publishers registered after every terminal result so rqt can
         # discover the topics even when a safety gate ends the squeeze early.
         # Only a completed hold keeps force; safety trips continue publishing zero.

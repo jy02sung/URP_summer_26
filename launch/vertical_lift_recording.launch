@@ -1,0 +1,7 @@
+<launch>
+  <!-- Run after gazebo.launch.  The terminal continuously shows palm-center
+       coordinates in world metres; force and camera visualizers are started
+       by the accompanying recording commands. -->
+  <node pkg="dual_arm" type="ee_position_publisher.py" name="ee_position_publisher"
+        output="screen"/>
+</launch>
