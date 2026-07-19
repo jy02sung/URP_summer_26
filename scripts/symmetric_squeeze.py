@@ -165,11 +165,22 @@ class SymmetricSqueeze:
             if (abs(self.box.position.x-desired_x)>0.003 or abs(self.box.position.y)>0.003 or
                     abs(self.box.position.z-desired_z)>0.005):
                 trip='final box displacement'
-                self.send(0.0,0.0)
         measured_left = max(0.0, self.left_y - bias_left)
         measured_right = max(0.0, -(self.right_y - bias_right))
         rospy.loginfo('symmetric squeeze: trip=%s L=%.3f R=%.3f cmdL=%.3f cmdR=%.3f max_v=%.3f',
                       trip or 'none', measured_left, measured_right, cmd_left, cmd_right, self.max_velocity)
+        # Keep graph publishers registered after every terminal result so rqt can
+        # discover the topics even when a safety gate ends the squeeze early.
+        # Only a completed hold keeps force; safety trips continue publishing zero.
+        keep_grasp = trip == 'final box displacement'
+        rospy.loginfo('keeping rqt force topics alive until shutdown')
+        while not rospy.is_shutdown():
+            self.graph_target = 10.0 if keep_grasp else 0.0
+            if keep_grasp:
+                self.send(cmd_left, cmd_right, common_x, common_z)
+            else:
+                self.send(0.0, 0.0)
+            rate.sleep()
         return 1 if trip else 0
 
 
