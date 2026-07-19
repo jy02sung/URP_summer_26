@@ -14,6 +14,8 @@ class SymmetricSqueeze:
         self.left_y = None
         self.right_y = None
         self.max_velocity = 0.0
+        self.current_velocity = 0.0
+        self.velocity_violation_since = None
         self.box = None
         self.pub = rospy.Publisher('/dual_arm/squeeze_force_targets', Float64MultiArray,
                                    queue_size=1, latch=True)
@@ -22,6 +24,8 @@ class SymmetricSqueeze:
         self.target_force_pub = rospy.Publisher('/dual_arm/grip_force/target', Float64, queue_size=1)
         self.bias_left = None
         self.bias_right = None
+        self.filtered_left = 0.0
+        self.filtered_right = 0.0
         self.graph_target = 0.0
         rospy.Subscriber('/dual_arm/left_ft_sensor', WrenchStamped, self.left_cb, queue_size=1)
         rospy.Subscriber('/dual_arm/right_ft_sensor', WrenchStamped, self.right_cb, queue_size=1)
@@ -36,7 +40,16 @@ class SymmetricSqueeze:
 
     def joint_cb(self, msg):
         if msg.velocity:
-            self.max_velocity = max(self.max_velocity, max(abs(v) for v in msg.velocity))
+            self.current_velocity = max(abs(v) for v in msg.velocity)
+            self.max_velocity = max(self.max_velocity, self.current_velocity)
+
+    def velocity_unsafe(self):
+        if self.current_velocity <= 0.5:
+            self.velocity_violation_since = None
+            return False
+        if self.velocity_violation_since is None:
+            self.velocity_violation_since = time.monotonic()
+        return time.monotonic()-self.velocity_violation_since >= 0.15
 
     def model_cb(self, msg):
         if 'aruco_box_26' in msg.name:
@@ -45,9 +58,16 @@ class SymmetricSqueeze:
     def send(self, left, right, common_x=0.0, common_z=0.0):
         self.pub.publish(Float64MultiArray(data=[left, right, common_x, common_z]))
         if self.bias_left is not None and self.bias_right is not None:
-            self.left_force_pub.publish(Float64(max(0.0, self.left_y-self.bias_left)))
-            self.right_force_pub.publish(Float64(max(0.0, -(self.right_y-self.bias_right))))
+            self.left_force_pub.publish(Float64(self.filtered_left))
+            self.right_force_pub.publish(Float64(self.filtered_right))
             self.target_force_pub.publish(Float64(self.graph_target))
+
+    def update_filtered_force(self):
+        raw_left = max(0.0, self.left_y-self.bias_left)
+        raw_right = max(0.0, -(self.right_y-self.bias_right))
+        self.filtered_left += 0.05*(raw_left-self.filtered_left)
+        self.filtered_right += 0.05*(raw_right-self.filtered_right)
+        return self.filtered_left, self.filtered_right
 
     def run(self):
         deadline = time.monotonic() + 5.0
@@ -84,8 +104,7 @@ class SymmetricSqueeze:
         left_contact = right_contact = False
         while not rospy.is_shutdown() and time.monotonic()-contact_start < 25.0:
             self.graph_target = 0.5
-            raw_left=max(0.0,self.left_y-bias_left);raw_right=max(0.0,-(self.right_y-bias_right))
-            filtered_left+=0.05*(raw_left-filtered_left);filtered_right+=0.05*(raw_right-filtered_right)
+            filtered_left,filtered_right=self.update_filtered_force()
             left_contact=left_contact or filtered_left>=0.5
             right_contact=right_contact or filtered_right>=0.5
             if left_contact and right_contact:break
@@ -94,7 +113,7 @@ class SymmetricSqueeze:
             dx=self.box.position.x-desired_x;dy=self.box.position.y;dz=self.box.position.z-desired_z
             common_x+=min(0.01,max(-0.01,min(5.0,max(-5.0,-500.0*dx))-common_x))
             common_z+=min(0.01,max(-0.01,min(2.0,max(-2.0,-200.0*dz))-common_z))
-            if abs(dx)>0.003 or abs(dy)>0.0015 or abs(dz)>0.003 or self.max_velocity>0.5:
+            if abs(dx)>0.003 or abs(dy)>0.0015 or abs(dz)>0.003 or self.velocity_unsafe():
                 trip='contact acquisition displacement'
                 break
             self.send(cmd_left,cmd_right,common_x,common_z);rate.sleep()
@@ -110,10 +129,7 @@ class SymmetricSqueeze:
             elapsed = time.monotonic() - start
             desired = min(10.0, 0.5+0.25*elapsed)  # both contacts established at 0.5 N
             self.graph_target = desired
-            raw_left = max(0.0, self.left_y - bias_left)
-            raw_right = max(0.0, -(self.right_y - bias_right))
-            filtered_left += 0.05*(raw_left-filtered_left)
-            filtered_right += 0.05*(raw_right-filtered_right)
+            filtered_left,filtered_right=self.update_filtered_force()
             measured_left, measured_right = filtered_left, filtered_right
             imbalance = measured_left - measured_right
             requested_left = desired + kp_force * (desired - measured_left) - k_balance * imbalance
@@ -137,7 +153,7 @@ class SymmetricSqueeze:
                 trip = 'box displacement'
             elif measured_left > 12.0 or measured_right > 12.0:
                 trip = 'force limit'
-            elif self.max_velocity > 0.5:
+            elif self.velocity_unsafe():
                 trip = 'velocity limit'
             if trip:
                 break
@@ -151,13 +167,17 @@ class SymmetricSqueeze:
             hold_start = time.monotonic()
             while not rospy.is_shutdown() and time.monotonic() - hold_start < 5.0:
                 self.graph_target = 10.0
-                measured_left = max(0.0, self.left_y - bias_left)
-                measured_right = max(0.0, -(self.right_y - bias_right))
+                measured_left, measured_right = self.update_filtered_force()
                 imbalance = measured_left - measured_right
-                cmd_left = min(12.0, max(0.0, 10.0 + kp_force*(10.0-measured_left)-k_balance*imbalance))
-                cmd_right = min(12.0, max(0.0, 10.0 + kp_force*(10.0-measured_right)+k_balance*imbalance))
-                cmd_left = min(12.0, max(0.0, cmd_left+k_center_y*self.box.position.y))
-                cmd_right = min(12.0, max(0.0, cmd_right-k_center_y*self.box.position.y))
+                error_left = 0.0 if abs(10.0-measured_left) < 0.2 else 10.0-measured_left
+                error_right = 0.0 if abs(10.0-measured_right) < 0.2 else 10.0-measured_right
+                requested_left = 10.0 + kp_force*error_left-k_balance*imbalance
+                requested_right = 10.0 + kp_force*error_right+k_balance*imbalance
+                # Hold uses the same filtered feedback and a tighter 1 N/s slew limit.
+                cmd_left += min(0.01, max(-0.01, requested_left-cmd_left))
+                cmd_right += min(0.01, max(-0.01, requested_right-cmd_right))
+                cmd_left = min(12.0, max(0.0, cmd_left))
+                cmd_right = min(12.0, max(0.0, cmd_right))
                 common_x = min(5.0, max(-5.0, -500.0*(self.box.position.x-desired_x)))
                 common_z = min(2.0, max(-2.0, -200.0*(self.box.position.z-desired_z)))
                 self.send(cmd_left, cmd_right, common_x, common_z)
@@ -175,8 +195,23 @@ class SymmetricSqueeze:
         keep_grasp = trip == 'final box displacement'
         rospy.loginfo('keeping rqt force topics alive until shutdown')
         while not rospy.is_shutdown():
+            measured_left, measured_right = self.update_filtered_force()
+            if keep_grasp and (abs(self.box.position.x-desired_x)>0.008 or
+                               abs(self.box.position.y-start_y)>0.008 or
+                               abs(self.box.position.z-desired_z)>0.008):
+                rospy.logwarn('releasing final grasp: box left the 8mm safety envelope')
+                keep_grasp = False
             self.graph_target = 10.0 if keep_grasp else 0.0
             if keep_grasp:
+                imbalance = measured_left-measured_right
+                error_left = 0.0 if abs(10.0-measured_left) < 0.2 else 10.0-measured_left
+                error_right = 0.0 if abs(10.0-measured_right) < 0.2 else 10.0-measured_right
+                requested_left = 10.0+kp_force*error_left-k_balance*imbalance
+                requested_right = 10.0+kp_force*error_right+k_balance*imbalance
+                cmd_left += min(0.01, max(-0.01, requested_left-cmd_left))
+                cmd_right += min(0.01, max(-0.01, requested_right-cmd_right))
+                cmd_left = min(12.0, max(0.0, cmd_left))
+                cmd_right = min(12.0, max(0.0, cmd_right))
                 self.send(cmd_left, cmd_right, common_x, common_z)
             else:
                 self.send(0.0, 0.0)

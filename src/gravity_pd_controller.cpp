@@ -63,8 +63,16 @@ class GravityPd {
       pinocchio::getFrameJacobian(model_,*data_,left_grip_,pinocchio::LOCAL_WORLD_ALIGNED,JL);
       pinocchio::getFrameJacobian(model_,*data_,right_grip_,pinocchio::LOCAL_WORLD_ALIGNED,JR);
       Eigen::Matrix<double,6,1> FL=Eigen::Matrix<double,6,1>::Zero(),FR=Eigen::Matrix<double,6,1>::Zero();
+      // Always squeeze along the line connecting both palm centers. This keeps the
+      // two contact forces collinear and opposite even when compliant wrists tilt.
+      Eigen::Vector3d palm_axis=data_->oMf[right_grip_].translation()-data_->oMf[left_grip_].translation();
+      const double palm_distance=palm_axis.norm();
+      if(palm_distance>1e-6)palm_axis/=palm_distance;else palm_axis=Eigen::Vector3d(0.0,-1.0,0.0);
+      FL.head<3>()=squeeze_force_left_*palm_axis;
+      FR.head<3>()=-squeeze_force_right_*palm_axis;
       FL(0)=FR(0)=0.5*common_force_x_; FL(2)=FR(2)=0.5*common_force_z_;
-      FL(1)=-squeeze_force_left_; FR(1)=squeeze_force_right_;
+      FL(0)+=squeeze_force_left_*palm_axis.x(); FR(0)-=squeeze_force_right_*palm_axis.x();
+      FL(2)+=squeeze_force_left_*palm_axis.z(); FR(2)-=squeeze_force_right_*palm_axis.z();
       squeeze_tau=JL.transpose()*FL+JR.transpose()*FR;
       squeeze_tau.head<3>().setZero();
     }
