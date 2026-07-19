@@ -11,6 +11,7 @@
 #include <fstream>
 #include <csignal>
 #include <cmath>
+#include <ctime>
 #include <eigen3/Eigen/Eigen>
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Geometry>
@@ -227,6 +228,12 @@ double deltaYL = 0.0, deltaYR = 0.0;   // y_cmd의 y_d(t) 대비 순응 변위 (
 // 속도 리밋(0.03m/s)은 그대로 유지 - 발산 방지는 변위가 아니라 속도 쪽이 핵심이었음(1차 검증).
 const double Y_CMD_MAX_DISP = 0.03;   // y_d(t) 기준 deltaY 최대 변위 [m]
 const double Y_CMD_VEL_LIMIT = 0.03;  // deltaY 최대 속도 [m/s] (기존 APPROACH_CONTACT_V_DES와 동일한 완만한 접촉 속도)
+
+// F/T 힘추종(스퀴즈) 진단용 CSV 로그. PHASE_GRASP_TO_PLACE 진입 첫 tick에 새 파일을 열고,
+// 그 구간을 벗어나면 닫는다 (main.cpp).
+std::ofstream force_log_csv;
+bool force_log_open = false;
+int force_log_tick = 0;
 
 // 매 tick IK 웜스타트 + 관절 속도/가속도 후진차분용 (온라인 계산이라 중심차분 대신 후진차분 사용)
 VectorXd q_cmd_prev     = VectorXd::Zero(DoF);

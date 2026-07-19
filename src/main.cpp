@@ -1040,6 +1040,22 @@ int main(int argc, char **argv)
                     deltaYL = xL_actual(1) - xL_d(1);
                     deltaYR = xR_actual(1) - xR_d(1);
                     admittance_initialized = true;
+
+                    // 진단용 CSV 로그 시작 (파지 시도마다 새 파일)
+                    char log_filename[256];
+                    std::time_t now_t = std::time(nullptr);
+                    std::strftime(log_filename, sizeof(log_filename), "force_log_%Y%m%d_%H%M%S.csv", std::localtime(&now_t));
+                    std::string log_path = ros::package::getPath("dual_arm") + "/logs/" + log_filename;
+                    force_log_csv.open(log_path);
+                    force_log_open = force_log_csv.is_open();
+                    force_log_tick = 0;
+                    if (force_log_open) {
+                        force_log_csv << "t_s,F_L_x,F_L_y,F_L_z,F_R_x,F_R_y,F_R_z,"
+                                         "squeeze_L_N,squeeze_R_N,target_fd_L_N,target_fd_R_N,deltaYL_m,deltaYR_m\n";
+                        ROS_INFO("Force log: %s", log_path.c_str());
+                    } else {
+                        ROS_WARN("Force log open failed: %s", log_path.c_str());
+                    }
                 }
 
                 // PHASE_RELEASE 진입 첫 tick: ticks_in_release를 0부터 다시 세기 시작.
@@ -1148,6 +1164,16 @@ int main(int argc, char **argv)
                 xL_cmd(1) = xL_d(1) + deltaYL;
                 xR_cmd(1) = xR_d(1) + deltaYR;
 
+                if (force_log_open) {
+                    force_log_csv << force_log_tick * SAMPLING_TIME << ","
+                                  << F_ext_L(0) << "," << F_ext_L(1) << "," << F_ext_L(2) << ","
+                                  << F_ext_R(0) << "," << F_ext_R(1) << "," << F_ext_R(2) << ","
+                                  << compressive_force_L << "," << compressive_force_R << ","
+                                  << target_fd_left << "," << target_fd_right << ","
+                                  << deltaYL << "," << deltaYR << "\n";
+                    force_log_tick++;
+                }
+
                 // x_cmd -> IK (직전 q_cmd로 웜스타트, 매 tick 목표가 미세하게만 움직여 빠르게 수렴 예상)
                 VectorXd q_cmd(DoF);
                 dualarm.SolveIK_Position(model, data, l_EE, r_EE, xL_cmd, xR_cmd, q_cmd_prev, q_cmd);
@@ -1170,6 +1196,10 @@ int main(int argc, char **argv)
             }
             else {
                 admittance_initialized = false;  // GRASP_TO_PLACE 밖 -> 다음 진입에 대비해 리셋
+                if (force_log_open) {
+                    force_log_csv.close();
+                    force_log_open = false;
+                }
 
                 for (int i = 0; i < DoF; i++){
                     dual_arm_targetp[i] = dual_arm_jointp_trajectory(traj_cnt, i);
@@ -1222,6 +1252,10 @@ int main(int argc, char **argv)
                 //  task_phase를 PHASE_APPROACH로 리셋한 뒤 다음 tick에 이 분기로 자연스럽게 넘어온다)
                 task_phase = PHASE_APPROACH;   // 복귀 완료 -> 접근 단계로 리셋 (어드미턴스 OFF)
                 admittance_initialized = false;  // 다음 PHASE_GRASP_TO_PLACE 진입에 대비해 리셋
+                if (force_log_open) {
+                    force_log_csv.close();
+                    force_log_open = false;
+                }
 
                 std_msgs::Bool traj_done_msg;
                 traj_done_msg.data = true;
