@@ -232,8 +232,19 @@ class SymmetricSqueeze:
                 self.graph_target=10.0
                 self.send(cmd_left,cmd_right,common_x,common_z)
                 rate.sleep()
-            if not trip and abs(self.box.position.z-desired_z)>0.015:
-                trip='lowering height error'
+            if not trip:
+                # Release on the pedestal, then allow the contact solver to settle
+                # before judging the final height.  Checking while the palms still
+                # carry squeeze force produced a false lowering error under GUI load.
+                self.graph_target = 0.0
+                self.send(0.0, 0.0)
+                settle_start = time.monotonic()
+                while not rospy.is_shutdown() and time.monotonic()-settle_start < 2.0:
+                    self.update_filtered_force()
+                    self.send(0.0, 0.0)
+                    rate.sleep()
+                if abs(self.box.position.z-desired_z)>0.015:
+                    trip='lowering height error'
         measured_left = max(0.0, self.left_y - bias_left)
         measured_right = max(0.0, -(self.right_y - bias_right))
         rospy.loginfo('symmetric squeeze: trip=%s L=%.3f R=%.3f cmdL=%.3f cmdR=%.3f max_v=%.3f (%s)',

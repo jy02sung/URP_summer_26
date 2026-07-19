@@ -39,11 +39,22 @@ class GravityPd {
     target_sub_=nh_.subscribe("/dual_arm/gravity_pd_target",1,&GravityPd::targetCb,this);
     squeeze_sub_=nh_.subscribe("/dual_arm/squeeze_force_targets",1,&GravityPd::squeezeCb,this);
   }
-  void run(){ros::WallRate rate(500);while(ros::ok()){ros::spinOnce();if(ready_)publish();rate.sleep();}}
+  void run(){
+    ros::WallRate rate(500);
+    while(ros::ok()){
+      ros::spinOnce();
+      // GUI/rqt load can make Gazebo advance slower than wall time.  Advancing the
+      // torque slew repeatedly with the same q,dq then creates a contact kick.
+      // Compute exactly once for each newly received physics state instead.
+      if(ready_&&state_updated_){state_updated_=false;publish();}
+      rate.sleep();
+    }
+  }
  private:
   void stateCb(const sensor_msgs::JointState::ConstPtr&m){
     last_state_wall_=ros::WallTime::now();
     for(size_t j=0;j<m->name.size();++j){auto it=index_.find(m->name[j]);if(it==index_.end()||j>=m->position.size()||j>=m->velocity.size())continue;int i=it->second;q_(i)=m->position[j];dq_(i)=m->velocity[j];seen_[i]=true;}
+    state_updated_=true;
     if(!ready_&&std::all_of(seen_.begin(),seen_.end(),[](bool x){return x;})){ready_=true;ROS_INFO("Gravity PD ready; safe bent-arm target enabled.");}
   }
   void targetCb(const std_msgs::Float64MultiArray::ConstPtr&m){if(ready_&&m->data.size()==N)for(int i=0;i<N;++i)target_(i)=m->data[i];}
@@ -94,6 +105,6 @@ class GravityPd {
     for(int c=0;c<N;++c){std_msgs::Float64 m;m.data=tau[ctrl_to_pin[c]];pubs_[c].publish(m);}
   }
   ros::NodeHandle nh_;ros::Subscriber state_,target_sub_,squeeze_sub_;std::array<ros::Publisher,N> pubs_;std::map<std::string,int>index_;
-  pinocchio::Model model_;std::unique_ptr<pinocchio::Data> data_;Eigen::VectorXd q_,dq_,target_;std::array<bool,N>seen_{};std::array<double,N>last_tau_{};bool ready_=false;ros::WallTime last_state_wall_;pinocchio::FrameIndex left_grip_,right_grip_;double squeeze_force_left_=0.0,squeeze_force_right_=0.0,common_force_x_=0.0,common_force_z_=0.0;
+  pinocchio::Model model_;std::unique_ptr<pinocchio::Data> data_;Eigen::VectorXd q_,dq_,target_;std::array<bool,N>seen_{};std::array<double,N>last_tau_{};bool ready_=false,state_updated_=false;ros::WallTime last_state_wall_;pinocchio::FrameIndex left_grip_,right_grip_;double squeeze_force_left_=0.0,squeeze_force_right_=0.0,common_force_x_=0.0,common_force_z_=0.0;
 };
 int main(int argc,char**argv){ros::init(argc,argv,"gravity_pd_controller");GravityPd c;c.run();}
